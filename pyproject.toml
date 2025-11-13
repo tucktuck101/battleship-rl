@@ -52,10 +52,15 @@ python_version = "3.11"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
+mypy_path = ["src"]
 
 [[tool.mypy.overrides]]
 module = "battleship.ai.environment"
 disable_error_code = ["misc", "type-arg"]
+
+[[tool.mypy.overrides]]
+module = "battleship.ai.agent"
+disable_error_code = ["misc", "no-untyped-call"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
