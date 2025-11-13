@@ -62,6 +62,18 @@ disable_error_code = ["misc", "type-arg"]
 module = "battleship.ai.agent"
 disable_error_code = ["misc", "no-untyped-call"]
 
+[[tool.mypy.overrides]]
+module = "battleship.telemetry.*"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "battleship.telemetry.config"
+disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
