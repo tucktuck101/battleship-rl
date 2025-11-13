@@ -8,7 +8,7 @@ from typing import Sequence
 
 from battleship.engine.board import Board, CellState
 from battleship.engine.game import BattleshipGame, GamePhase, Player
-from battleship.engine.ship import Coordinate, Ship
+from battleship.engine.ship import Coordinate, Orientation, Ship, ShipType
 
 ROW_LABELS = "ABCDEFGHIJ"
 
@@ -89,10 +89,71 @@ def _describe_shot(player: Player, coord: Coordinate, hit_ship: Ship | None) -> 
     return f"{player.name} fired at {label}: {outcome}"
 
 
+def _prompt_orientation(ship_type: ShipType) -> Orientation:
+    while True:
+        raw = (
+            input(
+                f"Place your {ship_type.name.title()} (length {ship_type.length}). Orientation [H/V]: "
+            )
+            .strip()
+            .upper()
+        )
+        if raw in {"H", "HOR", "HORIZONTAL"}:
+            return Orientation.HORIZONTAL
+        if raw in {"V", "VER", "VERTICAL"}:
+            return Orientation.VERTICAL
+        print("Please enter H for horizontal or V for vertical.")
+
+
+def _manual_ship_placement(board: Board) -> None:
+    board.ships.clear()
+    board.shots.clear()
+    for ship_type in ShipType:
+        while True:
+            print("\nCurrent layout:")
+            print(_format_board(board, show_ships=True))
+            orientation = _prompt_orientation(ship_type)
+            start_raw = input("Enter starting coordinate (e.g., A1): ")
+            try:
+                start = _coordinate_from_input(start_raw)
+            except ValueError as exc:
+                print(f"Invalid coordinate: {exc}")
+                continue
+            ship = Ship(ship_type, start, orientation)
+            if board.can_place_ship(ship):
+                board.place_ship(ship)
+                break
+            print("Ship cannot be placed there (out of bounds or overlaps). Try again.")
+
+
+def _prompt_manual_setup() -> bool:
+    while True:
+        raw = input("Would you like to place your ships manually? [Y/n]: ").strip().lower()
+        if raw in {"", "y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        print("Please answer with 'y' or 'n'.")
+
+
 def play_game(seed: int | None = None) -> None:
-    game = BattleshipGame(rng_seed=seed)
-    game.setup_random()
     print("Welcome to Battleship!\n")
+    rng = random.Random(seed)
+    game = BattleshipGame(rng_seed=seed)
+    player_board = game.boards[Player.PLAYER1]
+    ai_board = game.boards[Player.PLAYER2]
+
+    if _prompt_manual_setup():
+        _manual_ship_placement(player_board)
+    else:
+        player_board.random_placement(rng)
+        print("\nYour ships have been positioned automatically.")
+
+    ai_board.random_placement(rng)
+    game.phase = GamePhase.IN_PROGRESS
+    game.current_player = Player.PLAYER1
+    game.winner = None
+
     while game.phase is GamePhase.IN_PROGRESS:
         player = game.current_player
         opponent = player.opponent()
