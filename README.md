@@ -101,3 +101,4 @@ The long-term goal is a web UI (OTel-demo style) for:
 3. Browsing and replaying AI-vs-AI matches
 
 See `WEB_UI_README.md` for the current roadmap.
+
