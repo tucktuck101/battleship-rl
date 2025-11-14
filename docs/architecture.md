@@ -84,9 +84,14 @@ flowchart TB
     API --> Telemetry["Telemetry Layer"]
     Orchestrator --> Agents["Internal & Remote Agents"]
     Agents --> Orchestrator
+
+    API --> Auth0["Auth0 / OIDC"]
+    Auth0 --> Browser
+    Telemetry --> Observability["Grafana / Tempo / Loki"]
+    Browser --> Telemetry
 ```
 
-> TODO: Expand this diagram to explicitly show Auth0/OIDC and the observability backend as separate nodes.
+This view keeps client traffic, backend calls, telemetry exports, and authentication flows in one place so readers can quickly see the end-to-end dependencies.
 
 ### 2.3 Web UI (HTML/CSS/JS + Canvas/DOM)
 
@@ -141,8 +146,8 @@ Simulate AI-vs-AI matches, execute RL training loops, and provide reusable agent
 
 #### 2.5.4 Dependencies
 - `BattleshipEnv`, `DQNTrainer`, `DQNAgent`, telemetry singletons, SQL Server.
-
-> TODO: Flesh out responsibilities and workflows for long-running training jobs vs. ad-hoc match orchestration.
+- **Long-running training jobs**: launched via FastAPI tasks or worker pods using `battleship.ai.training.main`. Jobs stream metrics to SQL/telemetry, checkpoint models to `training_artifacts/`, and publish job status back to the API for UI monitoring.
+- **Ad-hoc match orchestration**: lightweight loops executed inline with FastAPI workers (for human-vs-human and human-vs-AI) or via dedicated worker processes for AI-vs-AI tournaments. These flows prioritize deterministic sequencing, per-move telemetry, and immediate persistence of move transcripts.
 
 ### 2.6 Deterministic Battleship Engine
 
@@ -406,7 +411,9 @@ flowchart LR
 
 ### 4.1 Code for Web UI
 
-> TODO: Document the repository/module layout for the browser client once merged (referenced by `WEB_UI_README.md` roadmap).
+- The browser SPA is being designed in the root-level `WEB_UI_README.md`, which tracks the React/TypeScript build plan, Canvas replay viewer, and WebSocket-driven lobby/match views.
+- Until the SPA sources land in this repo, the UI contract is expressed through the FastAPI endpoints documented in §3.2 and the telemetry wiring in §3.6. All client-state/replay requirements are enumerated in `WEB_UI_README.md#3-Target-Web-UI-Overview`.
+- The existing `scripts/run_ui.py` + `src/battleship/ui/game_ui.py` pair provide reference rendering logic (Pygame) that the browser client should mirror when implementing Canvas animations and lobby flows.
 
 ### 4.2 Code for FastAPI Service
 
@@ -424,7 +431,8 @@ flowchart LR
 ### 4.4 Code for SQL Server Schema
 
 - Schema migrations and models capturing Users, Rooms, Matches, MatchMoves, Agents, AgentRatings, TrainingJobs, and Replay references.
-- > TODO: Add direct references to ORM models or migration files once stabilized.
+- SQLAlchemy models plus Alembic migrations will live under `src/battleship/api/db/` (models) and `src/battleship/api/db/migrations/` (revision scripts) once the persistence layer lands; these paths are reserved in the repo structure plan so other modules can import them without circular dependencies.
+- Until that code is merged, schema drafts are maintained in §3.5 of this document and reflected in the FastAPI OpenAPI definitions for endpoints that will eventually read/write SQL Server.
 
 ### 4.5 Code for Telemetry & Observability
 
@@ -450,7 +458,10 @@ flowchart LR
 
 ### 5.3 Performance & Scalability
 
-> TODO: Document scalability plans (e.g., FastAPI worker scaling, orchestrator throughput, database sharding/replication) and performance tuning strategies.
+- FastAPI scales horizontally via additional Uvicorn/Gunicorn workers or ASGI pods; WebSockets are sharded per room/match channel and leverage Redis (or similar) pub/sub once multi-instance support is needed.
+- Match orchestrator throughput is tunable by running multiple worker processes/containers consuming a shared job queue so long-running AI battles do not block human games.
+- SQL Server tables should carry indexes on `(room_id, status)`, `(match_id, turn_index)`, and `(agent_id, rating_updated_at)` to keep lobby, replays, and ladder queries responsive as data grows; cold analytics can offload to read replicas.
+- Training and inference loops stay deterministic by constraining RNG seeds per match and by batching telemetry exports asynchronously so gameplay latency remains low.
 
 ### 5.4 Testing Strategy
 
@@ -464,15 +475,21 @@ flowchart LR
 
 ### 6.1 Runtime / Environment Overview
 
-> TODO: Describe runtime environments (local dev, CI, production), including how FastAPI, trainer workers, and SQL Server are hosted.
+- **Local development**: engineers run FastAPI via `poetry run uvicorn battleship.api.server:app --reload` (once endpoints land) and execute training loops with `python -m battleship.ai.training` while pointing telemetry to the local OTLP collector. SQL Server can be a developer’s local container or a shared dev instance.
+- **Continuous Integration**: GitHub Actions executes lint/type-check/pytest jobs (see §5.4) and uploads coverage; headless rendering is enforced via environment variables (e.g., `SDL_VIDEODRIVER=dummy`) so RL + UI tests run reliably.
+- **Production/staging**: FastAPI pods and orchestrator workers run in Kubernetes (see §6.2 for manifests), backed by managed SQL Server and the OTEL collector stack defined under `ops/`.
 
 ### 6.2 Docker / Compose / K8s
 
-> TODO: Capture containerization, orchestration, and infrastructure-as-code details (Dockerfiles, Compose stacks, Kubernetes manifests).
+- `Dockerfile.trainer` builds the Gymnasium/DQN training container with OTEL exporters baked in; `docker-compose.training.yml` wires that container to Grafana Alloy (OTLP collector), Prometheus, and Grafana for local observability experiments.
+- The `ops/` directory contains ready-to-use configs for Alloy (`ops/alloy/config.river`), Prometheus, Grafana dashboards, Loki, and Tempo—these are mounted by the compose stack or can be repurposed for Kubernetes ConfigMaps.
+- Kubernetes deployment specs live under `k8s/` (pods/services placeholders) and will eventually host FastAPI, match workers, SQL proxies, and observability agents inside the same cluster.
 
 ### 6.3 Environments (dev/test/prod)
 
-> TODO: List environment-specific configurations (Auth0 tenants, SQL instances, OTLP endpoints) and deployment pipelines.
+- **Dev**: Auth0 development tenant, SQL Server dev database, OTLP pointed at the local Alloy collector, and relaxed JWT audiences for rapid iteration. Feature flags default to enabling verbose telemetry and mock remote agents.
+- **Test/CI**: Headless/test Auth0 credentials, ephemeral SQL Server (or containerized equivalent), OTLP endpoints referencing CI-friendly collectors; pipelines automatically seed test data and destroy resources afterward.
+- **Prod**: Dedicated Auth0 tenant + JWKS, managed SQL Server with backups, OTLP routed to the enterprise Grafana stack, strict JWT scopes, and locked-down remote-agent registration requiring owner verification. Deployments roll out via blue/green or progressive delivery using Kubernetes tooling.
 
 ---
 
