@@ -15,6 +15,20 @@ play.
   loop, and optional `InstrumentedDQNAgent`.
 - **Environment** – `BattleshipEnv` exposes the engine via the Gymnasium API for
   training or evaluation.
+  - *Agent placement mode* (opt-in): pass `allow_agent_placement=True` to
+    `BattleshipEnv` to let the agent place its own fleet before firing begins.
+    The action space expands to encode `(ship_type, orientation, row, col)` moves
+    during placement and reverts to standard shot coordinates once the phase
+    switches to firing. Observations gain extra channels that indicate which
+    ships remain to be placed plus the current phase so policies can react
+    without bespoke wiring. Leave the flag at its default (`False`) to retain the
+    classic random-placement baseline.
+  - *Pluggable opponents*: specify `opponent_policy` directly or choose
+    `--opponent self|<checkpoint>` in the trainer to face deterministic bots,
+    pretrained checkpoints, or a second live DQN for self-play.
+  - *Opponent placement mode* – pass `allow_opponent_placement=True` (or
+    `--opponent-placement` via the trainer CLI) so the adversary places its own
+    fleet instead of receiving a random layout.
 - **Telemetry** – Shared tracer/meter/logger helpers with OTLP exporters.
 - **User Interfaces**
   - `scripts/run_ui.py` launches the Pygame UI.
@@ -57,6 +71,10 @@ python3 scripts/run_ui.py --instrumented
 # start a training session (see docs/training_tutorial.md for details)
 PYTHONPATH=src python3 -m battleship.ai.training --episodes 400 --save-dir runs/baseline
 ```
+
+Add `--opponent self` for self-play, point `--opponent` at a saved checkpoint
+to spar against a fixed agent, and include `--opponent-placement` to force the
+enemy to place its own ships during setup.
 
 Once a checkpoint has been produced you can play against it via:
 
@@ -101,4 +119,3 @@ The long-term goal is a web UI (OTel-demo style) for:
 3. Browsing and replaying AI-vs-AI matches
 
 See `WEB_UI_README.md` for the current roadmap.
-

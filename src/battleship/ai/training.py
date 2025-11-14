@@ -6,6 +6,7 @@ import argparse
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -31,17 +32,24 @@ class TrainingConfig:
     env_seed: int | None = 42
     agent_seed: int | None = 7
     save_dir: str = "training_artifacts"
+    opponent: str = "random"
+    opponent_checkpoint: str | None = None
+    opponent_manual_placement: bool = False
 
 
 class Trainer:
     """Coordinates env-agent interaction and logging."""
 
-    def __init__(self, config: TrainingConfig) -> None:
+    def __init__(self, config: TrainingConfig, opponent_agent: DQNAgent | None = None) -> None:
         self.config = config
         self.save_path = Path(config.save_dir)
         self.save_path.mkdir(parents=True, exist_ok=True)
 
-        self.env = BattleshipEnv(rng_seed=config.env_seed)
+        self.env = BattleshipEnv(
+            rng_seed=config.env_seed,
+            allow_opponent_placement=config.opponent_manual_placement,
+        )
+        self.opponent_agent: DQNAgent | None = opponent_agent
 
         agent_config = AgentConfig(
             gamma=config.gamma,
@@ -64,6 +72,33 @@ class Trainer:
         self.episode_rewards: list[float] = []
         self.episode_losses: list[float] = []
         self.eval_history: list[dict[str, float]] = []
+        self._initialise_opponent_agent(obs_channels=obs_channels, agent_config=agent_config)
+
+    def _initialise_opponent_agent(self, obs_channels: int, agent_config: AgentConfig) -> None:
+        """Attach an opponent agent (self, checkpoint, or external)."""
+
+        if self.opponent_agent is None:
+            if self.config.opponent == "self":
+                self.opponent_agent = self.agent
+            elif self.config.opponent == "checkpoint":
+                checkpoint = self.config.opponent_checkpoint
+                if checkpoint is None:
+                    raise ValueError("opponent checkpoint path must be provided.")
+                opponent = DQNAgent(obs_channels=obs_channels, config=agent_config)
+                opponent.load(checkpoint)
+                opponent.epsilon = 0.0
+                self.opponent_agent = opponent
+
+        if self.opponent_agent is not None:
+            self.env.opponent_policy = self._opponent_policy_wrapper
+            if self.config.opponent_manual_placement:
+                self.env.opponent_placement_policy = self._opponent_policy_wrapper
+
+    def _opponent_policy_wrapper(self, obs: np.ndarray, info: dict[str, Any]) -> int:
+        if self.opponent_agent is None:
+            raise RuntimeError("Opponent agent not initialised.")
+        legal_actions = info.get("action_mask")
+        return self.opponent_agent.select_action(obs, legal_actions, training=False)
 
     def _train_episode(self, episode_index: int) -> dict[str, float]:
         obs, info = self.env.reset()
@@ -104,6 +139,11 @@ class Trainer:
         lengths = []
         cached_epsilon = self.agent.epsilon
         self.agent.epsilon = 0.0
+        opponent_cached: float | None = None
+        if self.opponent_agent is not None and self.opponent_agent is not self.agent:
+            opponent_cached = getattr(self.opponent_agent, "epsilon", None)
+            if opponent_cached is not None:
+                self.opponent_agent.epsilon = 0.0
 
         for _ in range(self.config.eval_episodes):
             obs, info = self.env.reset()
@@ -120,6 +160,12 @@ class Trainer:
             rewards.append(episode_reward)
 
         self.agent.epsilon = cached_epsilon
+        if (
+            self.opponent_agent is not None
+            and self.opponent_agent is not self.agent
+            and opponent_cached is not None
+        ):
+            self.opponent_agent.epsilon = opponent_cached
         metrics = {
             "mean_reward": float(np.mean(rewards)) if rewards else 0.0,
             "win_rate": wins / max(1, self.config.eval_episodes),
@@ -142,9 +188,34 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train the Battleship DQN agent")
     parser.add_argument("--episodes", type=int, default=200)
     parser.add_argument("--save-dir", type=str, default="training_artifacts")
+    parser.add_argument(
+        "--opponent",
+        type=str,
+        default="random",
+        help=("Opponent type: 'random' (default), 'self', or the path to a checkpoint."),
+    )
+    parser.add_argument(
+        "--opponent-placement",
+        action="store_true",
+        help="Let the opponent place its own ships via its policy.",
+    )
     args = parser.parse_args()
 
-    config = TrainingConfig(num_episodes=args.episodes, save_dir=args.save_dir)
+    opponent_mode = "random"
+    opponent_checkpoint: str | None = None
+    if args.opponent == "self":
+        opponent_mode = "self"
+    elif args.opponent != "random":
+        opponent_mode = "checkpoint"
+        opponent_checkpoint = args.opponent
+
+    config = TrainingConfig(
+        num_episodes=args.episodes,
+        save_dir=args.save_dir,
+        opponent=opponent_mode,
+        opponent_checkpoint=opponent_checkpoint,
+        opponent_manual_placement=args.opponent_placement,
+    )
     trainer = Trainer(config)
 
     for episode in range(1, config.num_episodes + 1):

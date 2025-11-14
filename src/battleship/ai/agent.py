@@ -5,7 +5,12 @@ from __future__ import annotations
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence, TypeAlias
+from typing import Sequence
+
+try:  # Python < 3.10 support
+    from typing import TypeAlias
+except ImportError:  # pragma: no cover - typing shim for tests
+    from typing_extensions import TypeAlias
 
 import numpy as np
 import numpy.typing as npt

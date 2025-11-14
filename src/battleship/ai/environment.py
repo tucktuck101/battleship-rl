@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar, cast
+
+try:  # Python < 3.10 support
+    from typing import TypeAlias
+except ImportError:  # pragma: no cover - fallback for interpreter used in tests
+    from typing_extensions import TypeAlias
+
 
 import numpy as np
 import numpy.typing as npt
@@ -16,27 +22,36 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only shim
     _ActT = TypeVar("_ActT")
 
     class GymnasiumEnv(Generic[_ObsT, _ActT]):
-        ...
+        def reset(
+            self, *, seed: int | None = None, options: dict[str, Any] | None = None
+        ) -> tuple[_ObsT, dict[str, Any]]:
+            ...
 
 else:
     GymnasiumEnv = Env
 
 from battleship.engine.board import Board, CellState
 from battleship.engine.game import BattleshipGame, GamePhase, Player
-from battleship.engine.ship import Coordinate
+from battleship.engine.ship import Coordinate, Orientation, Ship, ShipType
 
 BOARD_SIZE = 10
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
-NUM_CHANNELS = 6
+BASE_NUM_CHANNELS = 6
 INVALID_ACTION_PENALTY = -0.1
 HIT_REWARD = 0.1
 MISS_PENALTY = -0.01
 WIN_REWARD = 1.0
 LOSE_PENALTY = -1.0
 MAX_STEPS = 400
+PLACEMENT_COMPLETION_REWARD = 0.05
+
+SHIP_TYPES: tuple[ShipType, ...] = tuple(ShipType)
+ORIENTATIONS: tuple[Orientation, ...] = tuple(Orientation)
+PLACEMENT_PER_SHIP = NUM_CELLS * len(ORIENTATIONS)
 
 NDArrayFloat: TypeAlias = npt.NDArray[np.float32]
 ActionMask: TypeAlias = npt.NDArray[np.int8]
+OpponentPolicy = Callable[[NDArrayFloat, Dict[str, Any]], int]
 
 
 @dataclass
@@ -44,28 +59,67 @@ class StepOutcome:
     agent_hit: bool = False
     agent_miss: bool = False
     invalid_action: bool = False
+    placement_complete: bool = False
     winner: Player | None = None
 
 
+@dataclass(frozen=True)
+class PlacementAction:
+    """Decoded placement command."""
+
+    ship_type: ShipType
+    coord: Coordinate
+    orientation: Orientation
+
+
 class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
-    """Single-agent environment for Battleship."""
+    """Single-agent Battleship environment with optional agent-driven placement phase."""
 
     metadata = {"render_modes": ["human", "ansi"]}
 
-    def __init__(self, render_mode: str | None = None, rng_seed: int | None = None) -> None:
+    def __init__(
+        self,
+        render_mode: str | None = None,
+        rng_seed: int | None = None,
+        allow_agent_placement: bool = False,
+        allow_opponent_placement: bool = False,
+        opponent_policy: OpponentPolicy | None = None,
+        opponent_placement_policy: OpponentPolicy | None = None,
+    ) -> None:
         self.render_mode = render_mode
         self._base_seed = rng_seed
         self.rng = random.Random(rng_seed)
-        self.action_space = cast(Space[int], Discrete(NUM_CELLS))
+        self.allow_agent_placement = allow_agent_placement
+        self.allow_opponent_placement = allow_opponent_placement
+        self.opponent_policy = opponent_policy
+        self.opponent_placement_policy = opponent_placement_policy
+
+        placement_channels = len(SHIP_TYPES) + 1 if allow_agent_placement else 0
+        self.num_channels = BASE_NUM_CHANNELS + placement_channels
+
+        total_actions = NUM_CELLS
+        if allow_agent_placement or allow_opponent_placement:
+            total_actions += len(SHIP_TYPES) * PLACEMENT_PER_SHIP
+        self.action_space = cast(Space[int], Discrete(total_actions))
         self.observation_space = Box(
-            low=0.0, high=1.0, shape=(NUM_CHANNELS, BOARD_SIZE, BOARD_SIZE), dtype=np.float32
+            low=0.0,
+            high=1.0,
+            shape=(self.num_channels, BOARD_SIZE, BOARD_SIZE),
+            dtype=np.float32,
         )
 
         self.game: BattleshipGame | None = None
         self.last_opponent_shot: Coordinate | None = None
+        self.last_player_shot: Coordinate | None = None
         self.done = False
         self.step_count = 0
         self.probability_map: NDArrayFloat = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+        self.phase: str = "firing"
+        self._pending_ships: set[ShipType] = set()
+        self._opponent_pending_ships: set[ShipType] = set()
+        self._ship_type_to_idx: dict[ShipType, int] = {
+            ship: idx for idx, ship in enumerate(SHIP_TYPES)
+        }
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -78,15 +132,44 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
 
         game_seed = self.rng.randint(0, 2**31 - 1)
         self.game = BattleshipGame(rng_seed=game_seed)
-        self.game.setup_random()
+        for player in Player:
+            self.game.boards[player] = Board()
+
+        self._pending_ships = set()
+        self._opponent_pending_ships = set()
+        self.game.phase = GamePhase.SETUP
+        self.game.current_player = Player.PLAYER1
+        self.game.winner = None
+
+        if self.allow_agent_placement:
+            self.phase = "placement"
+            self._pending_ships = set(SHIP_TYPES)
+        else:
+            self.phase = "firing"
+            self._randomly_place_player(Player.PLAYER1)
+
+        if self.allow_opponent_placement:
+            self._opponent_pending_ships = set(SHIP_TYPES)
+            self._execute_opponent_manual_placement()
+        else:
+            self._randomly_place_player(Player.PLAYER2)
+
+        if not self.allow_agent_placement:
+            self._enter_in_progress_phase()
 
         self.last_opponent_shot = None
+        self.last_player_shot = None
+        self.last_player_shot = None
         self.done = False
         self.step_count = 0
         self.probability_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
 
         observation = self._get_observation()
-        info = {"action_mask": self._legal_action_mask()}
+        info = {
+            "action_mask": self._legal_action_mask(),
+            "phase": self.phase,
+            "state": self.get_state_for_player(Player.PLAYER1),
+        }
         return observation, info
 
     def step(self, action: int) -> tuple[NDArrayFloat, float, bool, bool, dict[str, Any]]:
@@ -95,17 +178,101 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         if self.done:
             raise RuntimeError("Cannot call step() on a terminated episode.")
 
-        outcome = StepOutcome()
-        target_coord = self._action_to_coord(action)
+        if self.allow_agent_placement and self.phase == "placement":
+            return self._step_placement(action)
+        return self._step_firing(action)
 
-        if not self._is_action_legal(target_coord):
+    def _step_placement(
+        self, action: int
+    ) -> tuple[NDArrayFloat, float, bool, bool, dict[str, Any]]:
+        if self.game is None:
+            raise RuntimeError("Game not initialised.")
+
+        outcome = StepOutcome()
+        decoded = self._decode_action(action)
+        if not isinstance(decoded, PlacementAction):
             outcome.invalid_action = True
             reward = self._calculate_reward(outcome)
-            info = {"invalid_action": True, "action_mask": self._legal_action_mask()}
+            info = {
+                "invalid_action": True,
+                "action_mask": self._legal_action_mask(),
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            return self._get_observation(), reward, False, False, info
+
+        if decoded.ship_type not in self._pending_ships:
+            outcome.invalid_action = True
+            reward = self._calculate_reward(outcome)
+            info = {
+                "invalid_action": True,
+                "action_mask": self._legal_action_mask(),
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            return self._get_observation(), reward, False, False, info
+
+        player_board = self.game.boards[Player.PLAYER1]
+        ship = Ship(decoded.ship_type, decoded.coord, decoded.orientation)
+        if not player_board.place_ship(ship):
+            outcome.invalid_action = True
+            reward = self._calculate_reward(outcome)
+            info = {
+                "invalid_action": True,
+                "action_mask": self._legal_action_mask(),
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            return self._get_observation(), reward, False, False, info
+
+        self._pending_ships.remove(decoded.ship_type)
+        if not self._pending_ships:
+            self._begin_firing_phase()
+            outcome.placement_complete = True
+
+        self.step_count += 1
+        reward = self._calculate_reward(outcome)
+        observation = self._get_observation()
+        info = {
+            "action_mask": self._legal_action_mask(),
+            "phase": self.phase,
+            "state": self.get_state_for_player(Player.PLAYER1),
+        }
+        return observation, reward, False, False, info
+
+    def _step_firing(self, action: int) -> tuple[NDArrayFloat, float, bool, bool, dict[str, Any]]:
+        if self.game is None:
+            raise RuntimeError("Environment must be reset before stepping.")
+
+        outcome = StepOutcome()
+        decoded = self._decode_action(action)
+        if isinstance(decoded, PlacementAction):
+            outcome.invalid_action = True
+            reward = self._calculate_reward(outcome)
+            info = {
+                "invalid_action": True,
+                "action_mask": self._legal_action_mask(),
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            return self._get_observation(), reward, False, False, info
+
+        target_coord = decoded
+
+        if not self._is_fire_action_legal(target_coord):
+            outcome.invalid_action = True
+            reward = self._calculate_reward(outcome)
+            info = {
+                "invalid_action": True,
+                "action_mask": self._legal_action_mask(),
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
             return self._get_observation(), reward, False, False, info
 
         # Agent move
         cell_state, hit_ship = self.game.make_move(Player.PLAYER1, target_coord)
+        self.last_player_shot = target_coord
         if cell_state is CellState.HIT:
             outcome.agent_hit = True
             if hit_ship and hit_ship.is_sunk():
@@ -122,8 +289,7 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             terminated = True
             self.done = True
         else:
-            opponent_action = self._select_opponent_action()
-            opp_coord = self._action_to_coord(opponent_action)
+            opp_coord = self._choose_opponent_action()
             _, _ = self.game.make_move(Player.PLAYER2, opp_coord)
             self.last_opponent_shot = opp_coord
             phase = self.game.phase
@@ -142,6 +308,8 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         info = {
             "action_mask": self._legal_action_mask(),
             "winner": outcome.winner.name if outcome.winner else None,
+            "phase": self.phase,
+            "state": self.get_state_for_player(Player.PLAYER1),
         }
 
         return observation, reward, terminated, truncated, info
@@ -186,38 +354,93 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
 
     # Helper methods
     def _legal_action_mask(self) -> ActionMask:
+        mask: ActionMask = np.zeros(self.action_space.n, dtype=np.int8)
+        if self.game is None:
+            return mask
+
+        if self.allow_agent_placement and self.phase == "placement":
+            return self._placement_mask_for_player(Player.PLAYER1, self._pending_ships)
+
+        mask[:NUM_CELLS] = self._legal_shot_mask_for_player(Player.PLAYER1)
+        return mask
+
+    def _is_fire_action_legal(self, coord: Coordinate) -> bool:
+        mask = self._legal_shot_mask_for_player(Player.PLAYER1)
+        action = self._coord_to_action(coord)
+        if not 0 <= action < NUM_CELLS:
+            return False
+        return bool(mask[action])
+
+    def _choose_opponent_action(self) -> Coordinate:
+        mask = self._legal_shot_mask_for_player(Player.PLAYER2)
+        if not mask.any():
+            return Coordinate(0, 0)
+
+        if self.opponent_policy is None:
+            action_idx = self._random_action_from_mask(mask)
+        else:
+            action_idx = self._call_opponent_policy(self.opponent_policy, mask, "firing")
+            if not self._is_mask_action_legal(mask, action_idx):
+                action_idx = self._random_action_from_mask(mask)
+        return self._action_to_coord(action_idx)
+
+    def _legal_shot_mask_for_player(self, player: Player) -> ActionMask:
         mask: ActionMask = np.zeros(NUM_CELLS, dtype=np.int8)
         if self.game is None:
             return mask
-        board = self.game.boards[Player.PLAYER2]
+        target_board = self.game.boards[player.opponent()]
         idx = 0
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
                 coord = Coordinate(row, col)
-                if board.get_cell_state(coord) is CellState.UNKNOWN:
+                if target_board.get_cell_state(coord) is CellState.UNKNOWN:
                     mask[idx] = 1
                 idx += 1
         return mask
 
-    def _is_action_legal(self, coord: Coordinate) -> bool:
-        if self.game is None:
-            return False
-        board = self.game.boards[Player.PLAYER2]
-        return board.get_cell_state(coord) is CellState.UNKNOWN
-
-    def _select_opponent_action(self) -> int:
-        if self.game is None:
-            raise RuntimeError("Game not initialised.")
-        board = self.game.boards[Player.PLAYER1]
-        legal_actions = [
-            self._coord_to_action(Coordinate(row, col))
-            for row in range(BOARD_SIZE)
-            for col in range(BOARD_SIZE)
-            if board.get_cell_state(Coordinate(row, col)) is CellState.UNKNOWN
-        ]
-        if not legal_actions:
+    def _random_action_from_mask(self, mask: ActionMask) -> int:
+        legal = np.flatnonzero(mask)
+        if legal.size == 0:
             return 0
-        return self.rng.choice(legal_actions)
+        return int(self.rng.choice(legal.tolist()))
+
+    @staticmethod
+    def _is_mask_action_legal(mask: ActionMask, action: int) -> bool:
+        return 0 <= action < mask.shape[0] and bool(mask[action])
+
+    def _placement_mask_for_player(self, player: Player, pending: set[ShipType]) -> ActionMask:
+        mask: ActionMask = np.zeros(self.action_space.n, dtype=np.int8)
+        if self.game is None:
+            return mask
+        board = self.game.boards[player]
+        for ship_type in pending:
+            ship_idx = self._ship_type_to_idx[ship_type]
+            for orientation_idx, orientation in enumerate(ORIENTATIONS):
+                for row in range(BOARD_SIZE):
+                    for col in range(BOARD_SIZE):
+                        coord = Coordinate(row, col)
+                        ship = Ship(ship_type, coord, orientation)
+                        if board.can_place_ship(ship):
+                            action_idx = self._placement_indices(ship_idx, orientation_idx, coord)
+                            mask[action_idx] = 1
+        return mask
+
+    def _call_opponent_policy(
+        self,
+        policy: Callable[[NDArrayFloat, dict[str, Any]], int],
+        mask: ActionMask,
+        phase_label: str,
+    ) -> int:
+        opp_obs = self._build_observation_for_player(Player.PLAYER2)
+        context = {
+            "action_mask": mask,
+            "phase": phase_label,
+            "state": self.get_state_for_player(Player.PLAYER2),
+        }
+        try:
+            return int(policy(opp_obs, context))
+        except Exception as exc:  # pragma: no cover - defensive
+            raise RuntimeError("Opponent policy failed to produce an action.") from exc
 
     def _calculate_reward(self, outcome: StepOutcome) -> float:
         reward = 0.0
@@ -227,6 +450,8 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             reward += HIT_REWARD
         if outcome.agent_miss:
             reward += MISS_PENALTY
+        if outcome.placement_complete:
+            reward += PLACEMENT_COMPLETION_REWARD
         if outcome.winner is Player.PLAYER1:
             reward += WIN_REWARD
         elif outcome.winner is Player.PLAYER2:
@@ -234,12 +459,15 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         return reward
 
     def _get_observation(self) -> NDArrayFloat:
-        obs: NDArrayFloat = np.zeros((NUM_CHANNELS, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+        return self._build_observation_for_player(Player.PLAYER1)
+
+    def _build_observation_for_player(self, player: Player) -> NDArrayFloat:
+        obs: NDArrayFloat = np.zeros((self.num_channels, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
         if self.game is None:
             return obs
 
-        player_board = self.game.boards[Player.PLAYER1]
-        opponent_board = self.game.boards[Player.PLAYER2]
+        player_board = self.game.boards[player]
+        opponent_board = self.game.boards[player.opponent()]
 
         for ship in player_board.ships:
             for coord in ship.coordinates():
@@ -252,21 +480,114 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             if state is CellState.HIT:
                 obs[3, coord.row, coord.col] = 1.0
 
-        if self.last_opponent_shot:
-            obs[4, self.last_opponent_shot.row, self.last_opponent_shot.col] = 1.0
+        last_enemy_shot = (
+            self.last_opponent_shot if player is Player.PLAYER1 else self.last_player_shot
+        )
+        if last_enemy_shot:
+            obs[4, last_enemy_shot.row, last_enemy_shot.col] = 1.0
 
         obs[5, :, :] = self.step_count % 2
+
+        if self.allow_agent_placement:
+            base = BASE_NUM_CHANNELS
+            for idx, ship_type in enumerate(SHIP_TYPES):
+                value = 1.0 if ship_type in self._pending_ships else 0.0
+                obs[base + idx, :, :] = value
+            phase_channel = base + len(SHIP_TYPES)
+            obs[phase_channel, :, :] = 1.0 if self.phase == "placement" else 0.0
         return obs
 
     def _update_probability_map(self, coord: Coordinate) -> None:
         self.probability_map[coord.row, coord.col] += 0.1
 
-    @staticmethod
-    def _action_to_coord(action: int) -> Coordinate:
-        row = action // BOARD_SIZE
-        col = action % BOARD_SIZE
-        return Coordinate(row, col)
+    def get_state_for_player(self, player: Player) -> dict[str, Any]:
+        """Return a snapshot describing the game from a specific perspective."""
+        if self.game is None:
+            raise RuntimeError("Game not initialised.")
+        state = self.game.get_state()
+        return {
+            "phase": state.phase,
+            "current_player": state.current_player,
+            "winner": state.winner,
+            "player": state.boards[player],
+            "opponent": state.boards[player.opponent()],
+        }
 
     @staticmethod
     def _coord_to_action(coord: Coordinate) -> int:
         return coord.row * BOARD_SIZE + coord.col
+
+    @staticmethod
+    def _action_to_coord(action: int) -> Coordinate:
+        return Coordinate(action // BOARD_SIZE, action % BOARD_SIZE)
+
+    def _decode_action(self, action: int) -> Coordinate | PlacementAction:
+        if action < NUM_CELLS:
+            return Coordinate(action // BOARD_SIZE, action % BOARD_SIZE)
+        if not (self.allow_agent_placement or self.allow_opponent_placement):
+            raise ValueError("Placement actions unavailable in this mode.")
+        placement_idx = action - NUM_CELLS
+        ship_block = placement_idx // PLACEMENT_PER_SHIP
+        if ship_block >= len(SHIP_TYPES):
+            raise ValueError("Placement action index out of range.")
+        remainder = placement_idx % PLACEMENT_PER_SHIP
+        orientation_idx = remainder // NUM_CELLS
+        cell_idx = remainder % NUM_CELLS
+        ship_type = SHIP_TYPES[ship_block]
+        orientation = ORIENTATIONS[orientation_idx]
+        coord = Coordinate(cell_idx // BOARD_SIZE, cell_idx % BOARD_SIZE)
+        return PlacementAction(ship_type, coord, orientation)
+
+    def _placement_indices(self, ship_idx: int, orientation_idx: int, coord: Coordinate) -> int:
+        base = NUM_CELLS + ship_idx * PLACEMENT_PER_SHIP
+        return base + orientation_idx * NUM_CELLS + self._coord_to_action(coord)
+
+    def _begin_firing_phase(self) -> None:
+        self._pending_ships.clear()
+        self._enter_in_progress_phase()
+
+    def _randomly_place_player(self, player: Player) -> None:
+        if self.game is None:
+            raise RuntimeError("Game not initialised.")
+        self.game.boards[player].random_placement(self.rng)
+
+    def _execute_opponent_manual_placement(self) -> None:
+        if self.game is None:
+            raise RuntimeError("Game not initialised.")
+        pending: set[ShipType] = set(SHIP_TYPES)
+        self._opponent_pending_ships = pending
+        board = self.game.boards[Player.PLAYER2]
+        policy = self.opponent_placement_policy or self.opponent_policy
+        attempts = 0
+        max_attempts = 5000
+        while pending and attempts < max_attempts:
+            mask = self._placement_mask_for_player(Player.PLAYER2, pending)
+            if not mask.any():
+                break
+            if policy is None:
+                action_idx = self._random_action_from_mask(mask)
+            else:
+                action_idx = self._call_opponent_policy(policy, mask, "opponent_placement")
+                if not self._is_mask_action_legal(mask, action_idx):
+                    action_idx = self._random_action_from_mask(mask)
+            decoded = self._decode_action(action_idx)
+            if not isinstance(decoded, PlacementAction):
+                attempts += 1
+                continue
+            ship = Ship(decoded.ship_type, decoded.coord, decoded.orientation)
+            if board.place_ship(ship):
+                pending.remove(decoded.ship_type)
+            attempts += 1
+
+        if pending:
+            board.random_placement(self.rng)
+
+        self._opponent_pending_ships = set()
+
+    def _enter_in_progress_phase(self) -> None:
+        if self.game is None:
+            raise RuntimeError("Game not initialised.")
+        self.game.phase = GamePhase.IN_PROGRESS
+        self.game.current_player = Player.PLAYER1
+        self.game.winner = None
+        self.phase = "firing"
