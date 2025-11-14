@@ -1,0 +1,83 @@
+version: "3.9"
+
+networks:
+  monitoring:
+
+volumes:
+  tempo-data:
+  loki-data:
+
+services:
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=battleship-trainer,service.namespace=ml"
+    volumes:
+      - ./training_artifacts:/app/training_artifacts
+    depends_on:
+      - otel-collector
+    networks:
+      - monitoring
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    command:
+      - "--config=/etc/otel-collector/config.yaml"
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9464:9464"
+    volumes:
+      - ./ops/otel/config.yaml:/etc/otel-collector/config.yaml:ro
+    networks:
+      - monitoring
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - otel-collector
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    networks:
+      - monitoring
+
+  tempo:
+    image: grafana/tempo:latest
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./ops/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - monitoring
+
+  loki:
+    image: grafana/loki:latest
+    command: ["-config.file=/etc/loki/config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./ops/loki/config.yml:/etc/loki/config.yml:ro
+      - loki-data:/var/loki
+    networks:
+      - monitoring

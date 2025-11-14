@@ -4,14 +4,25 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 from battleship.ai.agent import AgentConfig, DQNAgent
 from battleship.ai.environment import BattleshipEnv
+from battleship.telemetry import (
+    TelemetryConfig,
+    get_meter,
+    get_tracer,
+    init_telemetry,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,6 +56,25 @@ class Trainer:
         self.save_path = Path(config.save_dir)
         self.save_path.mkdir(parents=True, exist_ok=True)
 
+        self._configure_telemetry()
+        self.tracer = get_tracer()
+        self.meter = get_meter()
+        self.episode_reward_hist = self.meter.create_histogram(
+            "battleship_episode_reward",
+            unit="1",
+            description="Total reward per training episode",
+        )
+        self.episode_loss_hist = self.meter.create_histogram(
+            "battleship_episode_mean_loss",
+            unit="1",
+            description="Mean loss per training episode",
+        )
+        self.eval_win_rate_hist = self.meter.create_histogram(
+            "battleship_eval_win_rate",
+            unit="1",
+            description="Win rate observed during evaluation",
+        )
+
         self.env = BattleshipEnv(
             rng_seed=config.env_seed,
             allow_opponent_placement=config.opponent_manual_placement,
@@ -74,6 +104,27 @@ class Trainer:
         self.eval_history: list[dict[str, float]] = []
         self._initialise_opponent_agent(obs_channels=obs_channels, agent_config=agent_config)
 
+    def _configure_telemetry(self) -> None:
+        endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        normalized = self._normalize_endpoint(endpoint)
+        config = TelemetryConfig(
+            enable_tracing=True,
+            enable_metrics=True,
+            enable_logging=False,
+            otlp_traces_endpoint=normalized,
+            otlp_metrics_endpoint=normalized,
+            service_name="battleship-trainer",
+            service_namespace="ml",
+        )
+        init_telemetry(config)
+        LoggingInstrumentor().instrument()
+
+    @staticmethod
+    def _normalize_endpoint(value: str | None) -> str | None:
+        if not value:
+            return None
+        return value.removeprefix("http://").removeprefix("https://")
+
     def _initialise_opponent_agent(self, obs_channels: int, agent_config: AgentConfig) -> None:
         """Attach an opponent agent (self, checkpoint, or external)."""
 
@@ -101,78 +152,115 @@ class Trainer:
         return self.opponent_agent.select_action(obs, legal_actions, training=False)
 
     def _train_episode(self, episode_index: int) -> dict[str, float]:
-        obs, info = self.env.reset()
-        total_reward = 0.0
-        losses: list[float] = []
+        with self.tracer.start_as_current_span("train_episode") as span:
+            obs, info = self.env.reset()
+            total_reward = 0.0
+            losses: list[float] = []
 
-        for step in range(self.config.max_steps_per_episode):
-            legal_actions = info.get("action_mask")
-            action = self.agent.select_action(obs, legal_actions=legal_actions, training=True)
-            next_obs, reward, terminated, truncated, info = self.env.step(action)
-            done = terminated or truncated
+            step = -1
+            for step in range(self.config.max_steps_per_episode):
+                legal_actions = info.get("action_mask")
+                action = self.agent.select_action(obs, legal_actions=legal_actions, training=True)
+                next_obs, reward, terminated, truncated, info = self.env.step(action)
+                done = terminated or truncated
 
-            self.agent.store_transition(obs, action, reward, next_obs, done)
-            loss = self.agent.train_step()
-            if loss is not None:
-                losses.append(loss)
-            self.agent.decay_epsilon()
+                self.agent.store_transition(obs, action, reward, next_obs, done)
+                loss = self.agent.train_step()
+                if loss is not None:
+                    losses.append(loss)
+                self.agent.decay_epsilon()
 
-            total_reward += reward
-            obs = next_obs
-            if done:
-                break
+                total_reward += reward
+                obs = next_obs
+                if done:
+                    break
 
-        mean_loss = float(np.mean(losses)) if losses else 0.0
-        metrics = {
-            "reward": total_reward,
-            "steps": float(step + 1),
-            "mean_loss": mean_loss,
-            "epsilon": self.agent.epsilon,
-        }
-        self.episode_rewards.append(total_reward)
-        self.episode_losses.append(mean_loss)
-        return metrics
+            mean_loss = float(np.mean(losses)) if losses else 0.0
+            step_count = step + 1 if step >= 0 else 0
+            metrics = {
+                "reward": total_reward,
+                "steps": float(step_count),
+                "mean_loss": mean_loss,
+                "epsilon": self.agent.epsilon,
+            }
+            span.set_attribute("episode.index", episode_index)
+            span.set_attribute("episode.reward", total_reward)
+            span.set_attribute("episode.steps", step_count)
+            span.set_attribute("agent.epsilon", self.agent.epsilon)
+
+            self.episode_reward_hist.record(total_reward)
+            self.episode_loss_hist.record(mean_loss)
+
+            self.episode_rewards.append(total_reward)
+            self.episode_losses.append(mean_loss)
+
+            logger.info(
+                "train_episode",
+                extra={
+                    "episode_index": episode_index,
+                    "reward": total_reward,
+                    "steps": step_count,
+                    "mean_loss": mean_loss,
+                    "epsilon": self.agent.epsilon,
+                },
+            )
+            return metrics
 
     def _evaluate(self) -> dict[str, float]:
-        rewards = []
-        wins = 0
-        lengths = []
-        cached_epsilon = self.agent.epsilon
-        self.agent.epsilon = 0.0
-        opponent_cached: float | None = None
-        if self.opponent_agent is not None and self.opponent_agent is not self.agent:
-            opponent_cached = getattr(self.opponent_agent, "epsilon", None)
-            if opponent_cached is not None:
-                self.opponent_agent.epsilon = 0.0
+        with self.tracer.start_as_current_span("evaluate_agent") as span:
+            rewards = []
+            wins = 0
+            lengths = []
+            cached_epsilon = self.agent.epsilon
+            self.agent.epsilon = 0.0
+            opponent_cached: float | None = None
+            if self.opponent_agent is not None and self.opponent_agent is not self.agent:
+                opponent_cached = getattr(self.opponent_agent, "epsilon", None)
+                if opponent_cached is not None:
+                    self.opponent_agent.epsilon = 0.0
 
-        for _ in range(self.config.eval_episodes):
-            obs, info = self.env.reset()
-            episode_reward = 0.0
-            for step in range(self.config.max_steps_per_episode):
-                action = self.agent.select_action(obs, info.get("action_mask"), training=False)
-                obs, reward, terminated, truncated, info = self.env.step(action)
-                episode_reward += reward
-                if terminated or truncated:
-                    if info.get("winner") == "PLAYER1":
-                        wins += 1
-                    lengths.append(step + 1)
-                    break
-            rewards.append(episode_reward)
+            for _ in range(self.config.eval_episodes):
+                obs, info = self.env.reset()
+                episode_reward = 0.0
+                for step in range(self.config.max_steps_per_episode):
+                    action = self.agent.select_action(obs, info.get("action_mask"), training=False)
+                    obs, reward, terminated, truncated, info = self.env.step(action)
+                    episode_reward += reward
+                    if terminated or truncated:
+                        if info.get("winner") == "PLAYER1":
+                            wins += 1
+                        lengths.append(step + 1)
+                        break
+                rewards.append(episode_reward)
 
-        self.agent.epsilon = cached_epsilon
-        if (
-            self.opponent_agent is not None
-            and self.opponent_agent is not self.agent
-            and opponent_cached is not None
-        ):
-            self.opponent_agent.epsilon = opponent_cached
-        metrics = {
-            "mean_reward": float(np.mean(rewards)) if rewards else 0.0,
-            "win_rate": wins / max(1, self.config.eval_episodes),
-            "avg_length": float(np.mean(lengths) if lengths else 0.0),
-        }
-        self.eval_history.append(metrics)
-        return metrics
+            self.agent.epsilon = cached_epsilon
+            if (
+                self.opponent_agent is not None
+                and self.opponent_agent is not self.agent
+                and opponent_cached is not None
+            ):
+                self.opponent_agent.epsilon = opponent_cached
+            metrics = {
+                "mean_reward": float(np.mean(rewards)) if rewards else 0.0,
+                "win_rate": wins / max(1, self.config.eval_episodes),
+                "avg_length": float(np.mean(lengths) if lengths else 0.0),
+            }
+            span.set_attribute("eval.mean_reward", metrics["mean_reward"])
+            span.set_attribute("eval.win_rate", metrics["win_rate"])
+            span.set_attribute("eval.avg_length", metrics["avg_length"])
+            self.eval_win_rate_hist.record(metrics["win_rate"])
+
+            logger.info(
+                "evaluate_agent",
+                extra={
+                    "mean_reward": metrics["mean_reward"],
+                    "win_rate": metrics["win_rate"],
+                    "avg_length": metrics["avg_length"],
+                },
+            )
+
+            self.eval_history.append(metrics)
+            return metrics
 
     def _save_metrics(self) -> None:
         payload = {
