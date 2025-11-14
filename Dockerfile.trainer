@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir -r requirements.txt \
 COPY src ./src
 COPY scripts ./scripts
 
-CMD ["python", "-m", "battleship.ai.training", "--episodes", "2000", "--save-dir", "training_artifacts"]
+CMD ["python", "scripts/auto_train_pipeline.py"]

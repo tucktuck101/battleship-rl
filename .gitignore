@@ -25,5 +25,9 @@ build/
 dist/
 *.egg-info/
 
+# large files
+training_artifacts/*.pt
+training_artifacts/metrics.json
+
 # troubleshooting files
 /scripts/run_ui.py
