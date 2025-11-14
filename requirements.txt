@@ -1,0 +1,11 @@
+ruff
+black
+mypy
+pytest
+pytest-cov
+coverage
+pygame
+numpy<2
+gymnasium
+fastapi
+uvicorn
