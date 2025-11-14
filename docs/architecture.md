@@ -475,9 +475,11 @@ flowchart LR
 
 ### 6.1 Runtime / Environment Overview
 
-- **Local development**: engineers run FastAPI via `poetry run uvicorn battleship.api.server:app --reload` (once endpoints land) and execute training loops with `python -m battleship.ai.training` while pointing telemetry to the local OTLP collector. SQL Server can be a developer’s local container or a shared dev instance.
-- **Continuous Integration**: GitHub Actions executes lint/type-check/pytest jobs (see §5.4) and uploads coverage; headless rendering is enforced via environment variables (e.g., `SDL_VIDEODRIVER=dummy`) so RL + UI tests run reliably.
-- **Production/staging**: FastAPI pods and orchestrator workers run in Kubernetes (see §6.2 for manifests), backed by managed SQL Server and the OTEL collector stack defined under `ops/`.
+- **Dev Runtime**: Engineers run FastAPI locally (`poetry run uvicorn battleship.api.server:app --reload` once endpoints land) and execute `python -m battleship.ai.training` against either a local SQL Server container or shared dev instance, pointing telemetry to the local OTLP collector.
+- **Test / CI Runtime**: GitHub Actions (or equivalent) performs lint → type-check → pytest with headless settings (`SDL_VIDEODRIVER=dummy`) and uploads coverage, validating the same contracts the web UI will consume.
+- **Training Runtime**: Long-running DQN jobs launch via `Dockerfile.trainer` or Kubernetes jobs; workloads mount `training_artifacts/`, stream metrics to OTLP (Grafana Alloy), and persist checkpoints/metrics for replay analysis.
+- **Prod Runtime**: FastAPI pods plus orchestrator workers run in Kubernetes alongside managed SQL Server and the OTEL collector stack defined in `ops/`, serving the browser UI and remote agents with Auth0-backed authentication.
+
 
 ### 6.2 Docker / Compose / K8s
 
