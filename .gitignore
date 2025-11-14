@@ -24,3 +24,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+
+# troubleshooting files
+/scripts/run_ui.py

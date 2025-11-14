@@ -1,11 +1,12 @@
 server:
   http_listen_port: 3200
+  grpc_listen_port: 4317
 
 distributor:
   receivers:
     otlp:
       protocols:
-        grpc: {}
+        grpc:
 
 ingester:
   trace_idle_period: 10s
@@ -14,12 +15,12 @@ ingester:
 
 compactor:
   compaction:
-    iter: 10m
+    block_retention: 24h
 
 storage:
   trace:
     backend: local
     local:
-      path: /var/tempo
+      path: /var/tempo/blocks
     wal:
       path: /var/tempo/wal

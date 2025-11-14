@@ -3,15 +3,11 @@ auth_enabled: false
 server:
   http_listen_port: 3100
 
-ingester:
-  lifecycler:
-    address: 127.0.0.1
-    ring:
-      kvstore:
-        store: inmemory
-      replication_factor: 1
-  chunk_idle_period: 5m
-  chunk_retain_period: 30s
+common:
+  path_prefix: /var/loki
+  ring:
+    kvstore:
+      store: inmemory
 
 schema_config:
   configs:
@@ -25,16 +21,21 @@ schema_config:
 
 storage_config:
   boltdb_shipper:
+    shared_store: filesystem
     active_index_directory: /var/loki/index
     cache_location: /var/loki/cache
-    shared_store: filesystem
   filesystem:
     directory: /var/loki/chunks
 
-compactor:
-  working_directory: /var/loki/compactor
-  shared_store: filesystem
+ingester:
+  lifecycler:
+    ring:
+      replication_factor: 1
+  chunk_idle_period: 5m
+  chunk_retain_period: 30s
 
 limits_config:
-  ingestion_rate_mb: 4
-  ingestion_burst_size_mb: 6
+  rejection_reason: default
+
+compactor:
+  working_directory: /var/loki/compactor
