@@ -22,7 +22,7 @@ services:
       - monitoring
 
   otel-collector:
-    image: otel/opentelemetry-collector:latest
+    image: otel/opentelemetry-collector-contrib:latest
     command:
       - "--config=/etc/otel-collector/config.yaml"
     ports:

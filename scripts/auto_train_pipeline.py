@@ -23,12 +23,10 @@ import logging
 import os
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
-
-from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 from battleship.ai.training import Trainer, TrainingConfig
 from battleship.telemetry import TelemetryConfig, get_tracer, init_telemetry
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
 # ---------------------------------------------------------------------------
 # High-level configuration
@@ -143,13 +141,11 @@ def run_phase_adaptive(
 
     epoch_metrics_history: list[dict[str, float]] = []
     total_episodes_run = 0
-    last_checkpoint: Optional[Path] = None
+    last_checkpoint: Path | None = None
 
     phase_tracer = get_tracer(_TRACER_NAME)
 
-    with phase_tracer.start_as_current_span(
-        "pipeline.phase", attributes={"phase": phase_name}
-    ):
+    with phase_tracer.start_as_current_span("pipeline.phase", attributes={"phase": phase_name}):
         for epoch_idx in range(1, criteria.max_epochs + 1):
             # ----------------- training episodes for this epoch -----------------
             for _ in range(criteria.episodes_per_epoch):
@@ -181,19 +177,22 @@ def run_phase_adaptive(
                 },
             )
 
-        # Save checkpoint and metrics after each epoch
-        checkpoint = save_dir / f"checkpoint_epoch{epoch_idx}.pt"
-        trainer.agent.save(checkpoint)
-        trainer._save_metrics()
-        last_checkpoint = checkpoint
+            # Save checkpoint and metrics after each epoch
+            checkpoint = save_dir / f"checkpoint_epoch{epoch_idx}.pt"
+            trainer.agent.save(checkpoint)
+            trainer._save_metrics()
+            last_checkpoint = checkpoint
 
-        # Decide whether to stop this phase
-        if ready_to_advance(epoch_metrics_history, criteria):
-            logger.info(
-                "phase_criteria_met",
-                extra={"phase": phase_name, "epoch": epoch_idx},
-            )
-            break
+            # Decide whether to stop this phase
+            if ready_to_advance(epoch_metrics_history, criteria):
+                logger.info(
+                    "phase_criteria_met",
+                    extra={"phase": phase_name, "epoch": epoch_idx},
+                )
+                break
+        else:
+            # Only executed if no break occurred
+            pass
 
     if last_checkpoint is None:
         # Should never happen if max_epochs >= 1, but keep a defensive path.
@@ -276,10 +275,6 @@ def main() -> None:
     )
 
 
-if __name__ == "__main__":
-    main()
-
-
 _TELEMETRY_CONFIGURED = False
 
 
@@ -309,3 +304,7 @@ def _normalize_endpoint(value: str | None) -> str | None:
     if not value:
         return None
     return value.removeprefix("http://").removeprefix("https://")
+
+
+if __name__ == "__main__":
+    main()

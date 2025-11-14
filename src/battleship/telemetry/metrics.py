@@ -39,7 +39,7 @@ def init_metrics(config: TelemetryConfig) -> Meter:
     readers = []
     if config.otlp_metrics_endpoint:
         exporter = OTLPMetricExporter(endpoint=config.otlp_metrics_endpoint, insecure=True)
-        readers.append(PeriodicExportingMetricReader(exporter))
+        readers.append(PeriodicExportingMetricReader(exporter, export_interval_millis=5000))
 
     provider = MeterProvider(resource=resource, metric_readers=readers)
     otel_metrics.set_meter_provider(provider)

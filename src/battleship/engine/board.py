@@ -44,6 +44,7 @@ class Board:
     ships: list[Ship] = field(default_factory=list)
     shots: dict[Coordinate, CellState] = field(default_factory=dict)
     allow_adjacent: bool = True
+    owner: str = "unknown"
 
     def is_valid_coordinate(self, coord: Coordinate) -> bool:
         """Check whether a coordinate lies inside the board boundaries."""
@@ -74,12 +75,14 @@ class Board:
             span.set_attribute("ship.length", ship.ship_type.length)
             span.set_attribute("ship.start.row", ship.start.row)
             span.set_attribute("ship.start.col", ship.start.col)
+            span.set_attribute("board.owner", self.owner)
             if self.can_place_ship(ship):
                 self.ships.append(ship)
-                PLACEMENT_COUNTER.add(1, attributes={"result": "success"})
+                PLACEMENT_COUNTER.add(1, attributes={"result": "success", "owner": self.owner})
                 logger.info(
                     "ship_placed",
                     extra={
+                        "owner": self.owner,
                         "ship_type": ship.ship_type.name,
                         "orientation": ship.orientation.name,
                         "row": ship.start.row,
@@ -87,10 +90,11 @@ class Board:
                     },
                 )
                 return True
-            PLACEMENT_COUNTER.add(1, attributes={"result": "failed"})
+            PLACEMENT_COUNTER.add(1, attributes={"result": "failed", "owner": self.owner})
             logger.warning(
                 "ship_placement_failed",
                 extra={
+                    "owner": self.owner,
                     "ship_type": ship.ship_type.name,
                     "orientation": ship.orientation.name,
                     "row": ship.start.row,
@@ -104,14 +108,17 @@ class Board:
         with tracer.start_as_current_span("board.receive_shot") as span:
             span.set_attribute("shot.row", coord.row)
             span.set_attribute("shot.col", coord.col)
+            span.set_attribute("board.owner", self.owner)
             if not self.is_valid_coordinate(coord):
                 logger.error(
-                    "shot_out_of_bounds", extra={"row": coord.row, "col": coord.col}
+                    "shot_out_of_bounds",
+                    extra={"row": coord.row, "col": coord.col, "owner": self.owner},
                 )
                 raise ValueError("Shot out of bounds.")
             if coord in self.shots:
                 logger.error(
-                    "shot_duplicate", extra={"row": coord.row, "col": coord.col}
+                    "shot_duplicate",
+                    extra={"row": coord.row, "col": coord.col, "owner": self.owner},
                 )
                 raise ValueError("Cell has already been targeted.")
 
@@ -119,18 +126,23 @@ class Board:
                 if ship.hit(coord):
                     self.shots[coord] = CellState.HIT
                     span.set_attribute("shot.outcome", "hit")
-                    SHOT_COUNTER.add(1, attributes={"outcome": "hit"})
+                    SHOT_COUNTER.add(1, attributes={"outcome": "hit", "owner": self.owner})
                     logger.info(
                         "shot_hit",
-                        extra={"row": coord.row, "col": coord.col, "ship_type": ship.ship_type.name},
+                        extra={
+                            "row": coord.row,
+                            "col": coord.col,
+                            "ship_type": ship.ship_type.name,
+                            "owner": self.owner,
+                        },
                     )
                     return CellState.HIT, ship
 
             self.shots[coord] = CellState.MISS
             span.set_attribute("shot.outcome", "miss")
-            SHOT_COUNTER.add(1, attributes={"outcome": "miss"})
+            SHOT_COUNTER.add(1, attributes={"outcome": "miss", "owner": self.owner})
             logger.info(
-                "shot_miss", extra={"row": coord.row, "col": coord.col}
+                "shot_miss", extra={"row": coord.row, "col": coord.col, "owner": self.owner}
             )
             return CellState.MISS, None
 
@@ -144,7 +156,8 @@ class Board:
 
     def random_placement(self, rng: random.Random) -> None:
         """Randomly place one ship of each type on the board."""
-        with tracer.start_as_current_span("board.random_placement"):
+        with tracer.start_as_current_span("board.random_placement") as span:
+            span.set_attribute("board.owner", self.owner)
             self.ships.clear()
             self.shots.clear()
             for ship_type in ShipType:
@@ -159,7 +172,7 @@ class Board:
                     attempts += 1
                 logger.debug(
                     "random_ship_placed",
-                    extra={"ship_type": ship_type.name, "attempts": attempts},
+                    extra={"ship_type": ship_type.name, "attempts": attempts, "owner": self.owner},
                 )
 
     def _occupied_coordinates(self) -> set[Coordinate]:

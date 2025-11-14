@@ -65,8 +65,8 @@ class BattleshipGame:
 
     def __init__(self, rng_seed: int | None = None) -> None:
         self.boards: dict[Player, Board] = {
-            Player.PLAYER1: Board(),
-            Player.PLAYER2: Board(),
+            Player.PLAYER1: Board(owner=Player.PLAYER1.value),
+            Player.PLAYER2: Board(owner=Player.PLAYER2.value),
         }
         self.phase: GamePhase = GamePhase.SETUP
         self.current_player: Player = Player.PLAYER1
@@ -76,12 +76,16 @@ class BattleshipGame:
     def setup_random(self) -> None:
         """Randomly place fleets for both players and start the game."""
         with tracer.start_as_current_span("game.setup_random"):
-            for board in self.boards.values():
+            for player, board in self.boards.items():
                 board.random_placement(self._rng)
+                logger.debug("game_random_placement", extra={"board_owner": player.value})
             self.phase = GamePhase.IN_PROGRESS
             self.current_player = Player.PLAYER1
             self.winner = None
-            logger.info("game_setup_random_complete")
+            logger.info(
+                "game_setup_random_complete",
+                extra={"phase": self.phase.value, "current_player": self.current_player.value},
+            )
 
     def make_move(self, player: Player, coord: Coordinate) -> tuple[CellState, Ship | None]:
         """Apply a single shot, enforcing turn order and win conditions."""
@@ -90,10 +94,16 @@ class BattleshipGame:
             span.set_attribute("row", coord.row)
             span.set_attribute("col", coord.col)
             if self.phase is not GamePhase.IN_PROGRESS:
-                logger.error("move_rejected_game_not_in_progress")
+                logger.error(
+                    "move_rejected_game_not_in_progress",
+                    extra={"player": player.value, "phase": self.phase.value},
+                )
                 raise RuntimeError("Game is not in progress.")
             if player is not self.current_player:
-                logger.error("move_rejected_wrong_player", extra={"current": self.current_player.value})
+                logger.error(
+                    "move_rejected_wrong_player",
+                    extra={"player": player.value, "current": self.current_player.value},
+                )
                 raise RuntimeError("It is not this player's turn.")
 
             target_board = self.boards[player.opponent()]
@@ -103,7 +113,10 @@ class BattleshipGame:
                 self.winner = player
                 self.phase = GamePhase.FINISHED
                 span.set_attribute("game.winner", player.value)
-                logger.info("game_finished", extra={"winner": player.value})
+                logger.info(
+                    "game_finished",
+                    extra={"winner": player.value, "finishing_player": player.value},
+                )
             else:
                 self.current_player = player.opponent()
                 span.set_attribute("next_player", self.current_player.value)
