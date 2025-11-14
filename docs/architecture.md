@@ -1,76 +1,309 @@
-# Battleship-RL Architecture
+# Battleship RL – Architecture
 
-This document describes the major components of the Battleship reinforcement
-learning project and how they interact across engine logic, AI training, UI
-layers, and telemetry. Diagrams use Mermaid syntax so they render in GitHub.
+## 0. Document Overview
+
+- **Purpose**: Describe how Battleship-RL is assembled across UI, backend, RL, data, and telemetry layers so contributors can reason from system context down to code.
+- **Audience**: Engineers building the web UI, Python backend, Gymnasium environment, RL agents, and observability tooling; stakeholders reviewing the platform architecture.
+- **Scope**: Covers the single browser client, FastAPI service, deterministic engine with Gymnasium + DQN trainer, SQL Server storage, telemetry/observability stack, authentication, remote agents, and supporting tooling.
 
 ---
 
-## 1. High-Level System Overview
+## 1. System Context
+
+### 1.1 System Summary
+
+Battleship-RL keeps deterministic game logic on the server while exposing REST/WebSocket APIs to a browser-only HTML/CSS/JS client. A Gymnasium environment and DQN trainer power AI agents and training jobs, with SQL Server as the authoritative store for users, rooms, matches, moves, agents, ratings, and training metadata. OpenTelemetry instrumentation spans the engine, backend, trainer, and web UI, exporting to an enterprise-grade observability stack. Auth0 (OAuth/OIDC) issues JWTs enforced by FastAPI middleware.
+
+### 1.2 External Users & Systems
+
+- **Players** interact exclusively via the browser-based Canvas/DOM UI.
+- **Agent Developers** register remote agents, schedule matches, and inspect telemetry/replays.
+- **OAuth/OIDC provider (Auth0)** authenticates users and issues JWTs.
+- **Observability stack (OTLP collector + Grafana/Tempo/Loki)** stores traces/metrics/logs.
+- **Remote Agents** (external services) participate in matches through a callback protocol.
+
+### 1.3 Context Diagram
 
 ```mermaid
-flowchart LR
-    BrowserUI["Web UI (HTML/CSS/JS + Canvas)"] -->|REST + WebSocket| FastAPI
-    PlayerUI["Pygame UI / CLI"] -->|Intent commands| FastAPI
-    FastAPI -->|Authoritative moves| Engine["Battleship Engine"]
-    Engine -->|Snapshots & Events| FastAPI
-    FastAPI -->|State feeds| BrowserUI
-    FastAPI -->|State feeds| PlayerUI
+C4Context
+    title Battleship-RL System Context
 
-    FastAPI -->|Observations| BattleshipEnv
-    BattleshipEnv -->|Rewards| Trainer["DQN Trainer"]
-    Trainer -->|Weights| Agent["DQN Agent"]
-    Agent -->|Actions| BattleshipEnv
+    Person(Player, "Player", "Interacts through a browser-based HTML/CSS/JS UI (Canvas + DOM).")
+    Person_Ext(AgentDev, "Agent Developer", "Registers remote agents and inspects telemetry/replays.")
 
-    FastAPI --> Telemetry["Telemetry Layer"]
-    Engine --> Telemetry
-    Trainer --> Telemetry
-    Telemetry --> OTEL["OTLP Collector / Observability"]
+    System_Boundary(BattleshipRL, "Battleship-RL Platform") {
+        System(WebUI, "Web UI", "HTML/CSS/JS app that renders boards via Canvas/DOM and talks to the API via REST/WebSockets. Runs entirely in the browser; all logic is server-authoritative.")
+        System(API, "FastAPI Service", "Python FastAPI backend exposing REST + WebSocket endpoints, orchestrating matches, and brokering access to engine, Gymnasium env, and trainer.")
+        System(Engine, "Battleship Engine + Gymnasium Env + RL Trainer", "Deterministic engine, Gymnasium environment, and DQN trainer/agents powering matches and training jobs.")
+        SystemDb(SQL, "SQL Server", "Authoritative relational store for users, rooms, matches, moves, agents, ladder ratings, and training jobs.")
+        System(Telemetry, "Telemetry Layer", "OpenTelemetry instrumentation producing traces/metrics/logs routed to the observability stack.")
+    }
 
-    subgraph Authoritative Core
-        FastAPI
-        Engine
-    end
+    System_Ext(Auth, "OAuth/OIDC Provider (Auth0)", "Issues JWTs consumed by the FastAPI service.")
+    System_Ext(Observability, "Observability Stack (OTLP Collector + Grafana/Tempo/Loki)", "Aggregates telemetry for dashboards and alerting.")
 
-    subgraph Training Loop
-        BattleshipEnv
-        Trainer
-        Agent
-    end
+    Rel(Player, WebUI, "Uses via browser", "HTTPS")
+    Rel(WebUI, API, "REST + WebSockets", "JSON / WS")
+    Rel(API, Engine, "Invokes engine/env/trainers", "Python calls")
+    Rel(API, SQL, "Persists and queries authoritative data", "ODBC/pytds")
+    Rel(API, Telemetry, "Emits spans/metrics/logs", "OTLP")
+    Rel(WebUI, Telemetry, "Emits browser OTEL (page views, API/WS events)", "OTLP/HTTP")
+    Rel(API, Auth, "Validates JWTs", "JWKS")
+    Rel(Telemetry, Observability, "Exports OTLP", "gRPC/HTTP")
+    Rel(AgentDev, API, "Registers/monitors agents", "REST/WebSockets")
+    Rel_Back(Observability, AgentDev, "Dashboards & alerts", "HTTPS")
 ```
 
-- **Engine**: deterministic ship placement, turn order, rule enforcement. All canonical game state lives server-side.
-- **Clients**: browser-based Canvas UI (primary), plus legacy Pygame/CLI. Every client only sends high-level intents (fire at coordinate, join room) and receives snapshots/events from the backend.
-- **FastAPI backend**: exposes REST + WebSocket APIs, orchestrates matches, invokes agents (local or remote), and mediates access to the engine, Gymnasium environment, and trainer.
-- **Gymnasium Env & Trainer**: unchanged RL bridge powering training jobs and AI-vs-AI simulations.
-- **Telemetry**: shared instrumentation for tracing, metrics, logging across backend, engine, trainer, and clients.
+---
 
-### Web + Service View
+## 2. Containers (High-Level Structure)
+
+### 2.1 Container List
+
+- **Web UI (HTML/CSS/JS + Canvas/DOM)**: Sole player-facing client submitting intents via REST/WebSockets and rendering server state.
+- **FastAPI Service**: Authoritative gateway handling auth, lobby, rooms, matches, AI orchestration, telemetry hooks, and SQL access.
+- **Match Orchestrator & RL Trainer (Gymnasium + DQN)**: Runs AI-vs-AI matches, training jobs, and interacts with `BattleshipEnv`.
+- **Deterministic Battleship Engine**: Enforces ship placement, turn order, win detection, and instrumentation hooks.
+- **SQL Server**: Stores users, rooms, matches, moves, agents, ratings, training jobs, and replay transcripts.
+- **Telemetry Layer / Observability Stack**: OpenTelemetry SDKs (Python + JS) streaming telemetry through OTLP collectors to Grafana/Tempo/Loki.
+- **OAuth/OIDC Authentication**: Auth0 issuing JWTs validated by FastAPI.
+- **Remote Agent Ecosystem**: External services registered via API to supply actions in orchestrated battles.
+
+### 2.2 Container Relationships Diagram
 
 ```mermaid
 flowchart TB
     subgraph Clients
         Browser["Web UI (Canvas + DOM)"]
-        Pygame["Pygame UI"]
-        CLI["CLI"]
     end
 
     Browser <-->|REST / WebSocket| API["FastAPI (REST + WS)"]
-    Pygame <-->|REST / WebSocket| API
-    CLI <-->|REST / WebSocket| API
-
     API --> Engine
-    API --> Orchestrator["Match Orchestrator"]
-    API --> Trainer
+    API --> Orchestrator["Match Orchestrator / Trainer"]
     API --> SQL["SQL Server"]
-    API --> Telemetry
+    API --> Telemetry["Telemetry Layer"]
     Orchestrator --> Agents["Internal & Remote Agents"]
     Agents --> Orchestrator
 ```
 
+> TODO: Expand this diagram to explicitly show Auth0/OIDC and the observability backend as separate nodes.
+
+### 2.3 Web UI (HTML/CSS/JS + Canvas/DOM)
+
+#### 2.3.1 Purpose
+Provide the single supported client experience for players, including lobby, ladder, matches, replays, and training controls.
+
+#### 2.3.2 Responsibilities
+- Render boards via `<canvas>` and DOM views for menus, lobby, ladder, replay viewer, and training forms.
+- Issue REST calls to configure rooms, matches, agents, and training jobs.
+- Maintain WebSocket subscriptions for lobby/match feeds with low latency.
+- Offer identical workflows for human-vs-human and human-vs-AI modes using shared APIs.
+
+#### 2.3.3 Interfaces (In/Out)
+- **Outbound**: REST (`/api/*`) for CRUD operations; WebSocket (`/ws/lobby`, `/ws/matches/{id}`) for streaming updates; telemetry via OTEL JS SDK.
+- **Inbound**: Receives state snapshots/events, lobby updates, and telemetry backends for dashboards.
+
+#### 2.3.4 Dependencies
+- FastAPI endpoints, Auth0 JS SDK for authentication flows, OTEL JS SDK for telemetry metadata.
+
+### 2.4 FastAPI Service (Backend/API Layer)
+
+#### 2.4.1 Purpose
+Act as the authoritative gateway terminating REST/WebSocket traffic, authenticating users, orchestrating matches/training, mediating engine access, and persisting to SQL Server.
+
+#### 2.4.2 Responsibilities
+- Expose REST endpoints for auth, lobby, matches, AI scheduling, ladder, agents, and training jobs.
+- Provide WebSocket endpoints for lobby and per-match events.
+- Run match orchestrator loops managing human/AI turns and validating moves.
+- Trigger Gymnasium/DQN training jobs and monitor their progress.
+- Wrap API calls, orchestrated moves, and training steps with telemetry spans/metrics/logs.
+
+#### 2.4.3 Interfaces (In/Out)
+- **Inbound**: Browser REST/WS calls authenticated via JWT; remote agent callbacks; telemetry configuration via environment.
+- **Outbound**: Calls into engine modules, Gymnasium env, DQN trainer, SQL Server, OTEL exporters, remote agents.
+
+#### 2.4.4 Dependencies
+- Deterministic Battleship engine library, Gymnasium `BattleshipEnv`, DQN trainer/agents, SQL Server drivers, Auth0 JWKS for token validation, telemetry exporters.
+
+### 2.5 Match Orchestrator & RL Trainer
+
+#### 2.5.1 Purpose
+Simulate AI-vs-AI matches, execute RL training loops, and provide reusable agents that FastAPI can invoke.
+
+#### 2.5.2 Responsibilities
+- Drive Gymnasium environment episodes (`reset`, `step`) and coordinate DQN agent actions.
+- Manage epsilon decay, evaluation runs, checkpointing, and replay buffers.
+- Execute orchestrated AI battles, post results to SQL Server, update agent ratings, and publish ladder updates.
+
+#### 2.5.3 Interfaces (In/Out)
+- **Inbound**: Scheduling commands from FastAPI (start training job, run AI match).
+- **Outbound**: Engine operations (`make_move`, `setup_random`), telemetry emissions, SQL persistence, remote agent callbacks for external participants.
+
+#### 2.5.4 Dependencies
+- `BattleshipEnv`, `DQNTrainer`, `DQNAgent`, telemetry singletons, SQL Server.
+
+> TODO: Flesh out responsibilities and workflows for long-running training jobs vs. ad-hoc match orchestration.
+
+### 2.6 Deterministic Battleship Engine
+
+#### 2.6.1 Purpose
+Maintain canonical game state, enforce rules, and provide instrumented operations for telemetry correlation.
+
+#### 2.6.2 Responsibilities
+- Manage boards, ships, turn order, move validation, and victory detection.
+- Offer instrumented versions of `setup_random` and `make_move` to emit spans/metrics/logs.
+
+#### 2.6.3 Interfaces (In/Out)
+- **Inbound**: Invocations from FastAPI or Gymnasium env.
+- **Outbound**: State snapshots for clients, telemetry data, move outcomes for storage.
+
+#### 2.6.4 Dependencies
+- Data classes (`Board`, `Ship`, `BattleshipGame`) and telemetry helpers.
+
+### 2.7 SQL Server (Authoritative Data Store)
+
+#### 2.7.1 Purpose
+Serve as the system of record backing the web UI, agents, training jobs, and analytics.
+
+#### 2.7.2 Responsibilities
+- Store users, rooms, matches, move transcripts, agents, ratings, training jobs, and replay references.
+- Provide durable audit/history needed for ladder rankings and observability cross-links.
+
+#### 2.7.3 Interfaces (In/Out)
+- **Inbound**: CRUD operations from FastAPI (via ODBC/pytds or equivalent).
+- **Outbound**: Query responses feeding UI/API responses and replay downloads.
+
+#### 2.7.4 Dependencies
+- SQL Server instances/driver connectivity, migrations/schema definition.
+
+### 2.8 Telemetry Layer / Observability Stack
+
+#### 2.8.1 Purpose
+Deliver enterprise-grade observability across backend, engine, trainer, and web UI components.
+
+#### 2.8.2 Responsibilities
+- Provide OTEL tracer/meter/logger singletons for Python modules.
+- Collect browser telemetry via OTEL JS SDK (page views, API calls, WebSocket events).
+- Ship telemetry to OTLP collectors, Grafana/Tempo/Loki dashboards, and correlate IDs with SQL entities.
+
+#### 2.8.3 Interfaces (In/Out)
+- **Inbound**: Instrumented spans/metrics/logs from engine, API, trainer, and web UI.
+- **Outbound**: Export streams to OTLP collector, dashboards, and alerts.
+
+#### 2.8.4 Dependencies
+- OpenTelemetry SDKs (Python + JS), collector endpoints, Grafana stack integrations.
+
+### 2.9 OAuth/OIDC Authentication
+
+#### 2.9.1 Purpose
+Authenticate players and agents via Auth0, issuing JWTs enforced by FastAPI middleware.
+
+#### 2.9.2 Responsibilities
+- Handle login/signup flows, provide tokens with claims for FastAPI, and expose JWKS for validation.
+
+#### 2.9.3 Interfaces (In/Out)
+- **Inbound**: Players using Auth0 hosted login or JS SDK flows.
+- **Outbound**: JWTs consumed by browser, FastAPI verification, user profile lookups.
+
+#### 2.9.4 Dependencies
+- Auth0 tenant configuration, FastAPI security middleware, SQL user mapping.
+
+### 2.10 Remote Agent Ecosystem
+
+#### 2.10.1 Purpose
+Let external services participate in matches and training evaluations through a stable protocol.
+
+#### 2.10.2 Responsibilities
+- Maintain agent registry metadata (type, callback URL, owner, ratings).
+- For each turn, send observations to remote callbacks and ingest returned moves.
+
+#### 2.10.3 Interfaces (In/Out)
+- **Outbound**: HTTP POST callbacks with `{match_id, player_role, observation, legal_actions}`.
+- **Inbound**: Action responses `{ action: { row, col }, metadata? }`, telemetry/reporting updates.
+
+#### 2.10.4 Dependencies
+- FastAPI agent endpoints, SQL Server storage, network connectivity to remote services.
+
 ---
 
-## 2. Engine & Telemetry Modules
+## 3. Components (Per Container)
+
+### 3.1 Components of Web UI
+
+```mermaid
+flowchart TB
+    subgraph Web Frontend
+        Canvas["Canvas Board\nshots, hits, animations"]
+        DOM["DOM UI\nmenus, lobby, ladder, forms"]
+        StateStore["Client State (Redux-like)"]
+    end
+    BrowserEvents["User Input"] --> DOM
+    DOM --> StateStore
+    Canvas --> StateStore
+    StateStore --> Canvas
+    StateStore --> DOM
+    StateStore -->|REST / WS| API["FastAPI Backend"]
+```
+
+#### 3.1.1 Canvas Board
+- Implements board rendering, ship silhouettes, and particle effects for hits/misses.
+
+#### 3.1.2 DOM UI & State Store
+- DOM handles menus, lobby, ladder, replay viewers, and training forms.
+- State store synchronizes REST/WS payloads with UI, ensuring consistent match/lobby state.
+
+### 3.2 Components of FastAPI Service
+
+#### 3.2.1 REST Endpoints
+- Auth (`/api/me`), lobby (`/api/lobby/rooms` CRUD), matches (`/api/matches`, move submission), AI matches (`/api/ai-matches`), agents (`/api/agents`), ladder (`/api/ladder`), training jobs (`/api/training-jobs`).
+
+#### 3.2.2 WebSocket Endpoints
+- `/ws/lobby` for room events, `/ws/matches/{match_id}` for state snapshots, moves, chat, and spectator updates.
+
+#### 3.2.3 Match Orchestrator
+- Drives human-vs-human, human-vs-AI, and AI-vs-AI flows:
+  1. Players connect via web UI; backend creates matches with chosen agents.
+  2. Lobby announces room updates until ready; backend manages subscriptions and turn order.
+  3. AI-vs-AI loop builds observations, requests actions (internal or remote), validates/apply moves, records telemetry, stores replays, updates ratings.
+
+#### 3.2.4 Remote Agent Integration
+- Registers agents via `/api/agents`, enforces timeouts, handles retries/defaults for illegal actions, and updates ladder stats.
+
+#### 3.2.5 Training Job Management
+- Exposes APIs to start/monitor training jobs, streaming summaries, metrics, and checkpoints to clients.
+
+### 3.3 Components of Match Orchestrator & RL Trainer
+
+```mermaid
+sequenceDiagram
+    participant Trainer
+    participant Env as BattleshipEnv
+    participant Game as BattleshipGame
+    participant Agent as DQNAgent
+
+    Trainer->>Env: reset()
+    Env->>Game: setup_random()
+    Env-->>Trainer: observation, action_mask
+    loop Per Step
+        Trainer->>Agent: select_action(obs, mask)
+        Agent-->>Trainer: action
+        Trainer->>Env: step(action)
+        Env->>Game: make_move(player1)
+        Game-->>Env: cell_state
+        Env->>Game: make_move(player2)
+        Env-->>Trainer: next_obs, reward, done, info
+        Trainer->>Agent: store_transition(...)
+        Trainer->>Agent: train_step()
+        Note over Agent: update policy, target net sync\nper config
+    end
+    Trainer->>Agent: save(checkpoint)
+```
+
+- `BattleshipEnv` bridges RL code with deterministic engine state snapshots.
+- `Trainer` manages episodes, epsilon decay, evaluation runs, and checkpointing.
+- `DQNAgent` provides dueling CNN architecture, replay buffer, target updates; optional instrumentation wraps `select_action`/`train_step`.
+
+### 3.4 Components of Deterministic Engine
 
 ```mermaid
 classDiagram
@@ -111,102 +344,25 @@ classDiagram
     InstrumentedBattleshipGame --|> BattleshipGame
 ```
 
-- `Board`, `Ship`, and `Coordinate` model the physical state of each player.
-- `BattleshipGame` enforces phases, turn order, and win detection.
-- `InstrumentedBattleshipGame` wraps `setup_random` and `make_move` with OTEL spans
-  and emits metrics/logs for hits, misses, and wins.
+### 3.5 Components of SQL Server
 
----
+- **Users**: internal `user_id`, Auth0 link, display info.
+- **Rooms & RoomPlayers**: lobby metadata (owner, mode, capacity, status) and occupants.
+- **Matches**: participants, modes, seeds, timestamps, victory reasons.
+- **MatchMoves**: ordered move list used for replays and analytics.
+- **Agents**: metadata for internal/remote agents.
+- **AgentRatings**: ELO/TrueSkill-like ladder data.
+- **TrainingJobs & TrainingRunSummary**: configs, status, metrics, checkpoint references.
+- Notes: model checkpoints live outside SQL Server (filesystem/blob store) referenced by ID/path; telemetry lives in observability stack but stores IDs for cross-linking.
 
-## 3. RL Agent & Training Loop
-
-```mermaid
-sequenceDiagram
-    participant Trainer
-    participant Env as BattleshipEnv
-    participant Game as BattleshipGame
-    participant Agent as DQNAgent
-
-    Trainer->>Env: reset()
-    Env->>Game: setup_random()
-    Env-->>Trainer: observation, action_mask
-    loop Per Step
-        Trainer->>Agent: select_action(obs, mask)
-        Agent-->>Trainer: action
-        Trainer->>Env: step(action)
-        Env->>Game: make_move(player1)
-        Game-->>Env: cell_state
-        Env->>Game: make_move(player2)
-        Env-->>Trainer: next_obs, reward, done, info
-        Trainer->>Agent: store_transition(...)
-        Trainer->>Agent: train_step()
-        Note over Agent: update policy, target net sync\nper config
-    end
-    Trainer->>Agent: save(checkpoint)
-```
-
-- `BattleshipEnv` acts as the bridge between RL code and the deterministic engine.
-- `Trainer` manages episodes, epsilon decay, evaluation runs, and checkpointing.
-- `DQNAgent` provides the dueling CNN architecture, replay buffer, and target updates.
-- `InstrumentedDQNAgent` (opt-in) surrounds `select_action`/`train_step` with spans & metrics.
-
----
-
-## 4. UI Stack
-
-```mermaid
-flowchart TB
-    subgraph Web Frontend
-        Canvas["Canvas Board\nshots, hits, animations"]
-        DOM["DOM UI\nmenus, lobby, ladder, forms"]
-        StateStore["Client State (Redux-like)"]
-    end
-    BrowserEvents["User Input"] --> DOM
-    DOM --> StateStore
-    Canvas --> StateStore
-    StateStore --> Canvas
-    StateStore --> DOM
-    StateStore -->|REST / WS| API["FastAPI Backend"]
-```
-
-- **Web UI (primary)**: Entirely written in JavaScript/TypeScript with HTML/CSS. The Battle board renders on `<canvas>` (for grid, ship silhouettes, particle effects), while menus, lobby, ladder, replay viewer, and training forms live in the DOM.
-  - **REST calls**: create rooms, configure matches, submit moves, schedule AI-vs-AI matches, manage agents, start training jobs.
-  - **WebSockets**: subscribe to lobby streams and per-match channels for low-latency updates without polling (room list, players joining/leaving, shots, game-over events).
-  - **Modes** (human vs AI / human vs human) share the exact same API surface; the backend enforces mode-specific rules.
-- **Pygame UI & CLI (secondary)**: continue to exist as alternative clients using the same REST/WS APIs. They remain useful for local development or simplified interfaces, but the long-term UX centers on the web frontend.
-- Regardless of client, game logic never runs locally—clients submit “fire at (row, col)” intents and render whatever the server returns.
-
----
-
-## 5. Backend Architecture (FastAPI/API Layer)
-
-- **FastAPI** is the authoritative gateway: it terminates REST and WebSocket traffic, authenticates users, brokers access to SQL Server, and invokes the engine, Gymnasium environment, DQN trainer, or remote agents as needed.
-- **REST endpoints** cover:
-  - Authenticated operations (`/api/me`, user profile).
-  - Lobby & rooms (list/create/join/leave).
-  - Match management (create, status, submitting moves).
-  - AI-vs-AI scheduling, ladder, agent registry, and training jobs/summaries.
-- **WebSocket endpoints** deliver:
-  - Lobby real-time events (`/ws/lobby`).
-  - Live match feeds (`/ws/matches/{match_id}`) for human-vs-human or spectators.
-- **Match orchestrator** (service running inside FastAPI workers or background tasks):
-  - Drives AI-vs-AI battles by repeatedly building player observations, requesting actions (internal DQN or remote HTTP agents), applying them via the engine, and recording replays.
-  - Emits telemetry for each decision and final ratings.
-- **Integration points**:
-  - Engine: FastAPI instantiates `BattleshipGame`/`InstrumentedBattleshipGame` per match and keeps canonical state.
-  - Gymnasium + Trainer: exposed via API so users can start/monitor training jobs.
-  - Telemetry: every API call, orchestrated move, and training step is wrapped in OTEL spans with metrics/logs forwarded to the collector.
-
----
-
-## 6. Telemetry Wiring
+### 3.6 Components of Telemetry Layer
 
 ```mermaid
 flowchart LR
     subgraph Modules
         EngineTracing["InstrumentedBattleshipGame"]
         AgentTracing["InstrumentedDQNAgent"]
-        UITracing["BattleshipUI Telemetry"]
+        UITracing["Web UI Telemetry (OpenTelemetry JS)"]
     end
 
     EngineTracing --> Tracer["get_tracer('battleship.engine')"]
@@ -226,163 +382,104 @@ flowchart LR
     Logger --> OTLP Logs
 ```
 
-- `battleship.telemetry.tracer` / `metrics` / `logger` expose singletons.
-- Telemetry initialization (`init_telemetry` or individual `init_*` functions) configures OTLP exporters or console fallbacks.
-- Each module passes consistent attributes (e.g., player, coord, frame index) to keep observability correlated across engine, agent, and UI.
-- Web backend and web UI add identifiers (match_id, room_id, agent_id, user_id) so traces, metrics (move latency, win rates, training KPIs), and logs can be correlated with SQL Server entities, and deep-linked from the UI into observability dashboards.
-- Replays are stored in SQL Server (move transcripts) and can be replayed via Canvas animations; corresponding telemetry spans let engineers inspect latency or errors alongside the replay.
+- Python modules expose singleton tracer/meter/logger initializers.
+- Web backend and engine/agent components emit spans/metrics via Python OTEL SDK.
+- Browser UI emits OTEL JS telemetry (page views, API calls, WebSocket events).
+- Shared identifiers (match_id, room_id, agent_id, user_id) keep traces correlated with SQL entities and enable UI deep links.
+- Replays stored in SQL Server can be replayed via Canvas animations; telemetry spans line up with move latency/errors.
+
+### 3.7 Components of OAuth/OIDC
+
+- Hosted login page or Auth0 JS SDK flows providing ID/access tokens.
+- FastAPI middleware validating JWT signature/claims (issuer, audience, expiry) and mapping `(provider, sub)` to internal `user_id`.
+- Request context attaches `user_id` for downstream authorization.
+
+### 3.8 Components of Remote Agent Ecosystem
+
+- Agent registry storing metadata, callback URLs, owner info.
+- Callback protocol exchanging observations and actions with timeout handling, retries, defaults for illegal moves, and telemetry logging.
+- Ladder integration updating ratings and exposing stats for web UI.
 
 ---
 
-## 7. Data Storage (SQL Server)
+## 4. Code Mapping (Per Container / Component)
 
-SQL Server is the authoritative relational store for structured data powering the web UI:
+### 4.1 Code for Web UI
 
-- **Users**: internal `user_id`, linked Auth0 provider/sub, display name, avatar, preferences.
-- **Rooms & RoomPlayers**: lobby metadata (owner, mode, capacity, status) and the players currently in a room.
-- **Matches**: mode (human_vs_ai, human_vs_human, ai_vs_ai), participants, assigned agents, RNG seeds, start/end timestamps, victory reason.
-- **MatchMoves**: ordered move list (row/col, player, outcome, elapsed time) used for replays and analytics.
-- **Agents**: both internal Python agents and remote agents (type, callback URL, owner, description).
-- **AgentRatings**: per-agent ELO/TrueSkill-style ratings, win/loss/draw counts, historical snapshots.
-- **TrainingJobs & TrainingRunSummary**: job configs, status, metrics (reward curves, win rates), and references to produced checkpoints (paths/object-storage IDs).
+> TODO: Document the repository/module layout for the browser client once merged (referenced by `WEB_UI_README.md` roadmap).
 
-Notes:
-- Model checkpoints themselves live outside SQL Server (filesystem, blob storage, or artifact store) and are referenced by ID/path.
-- OpenTelemetry traces/metrics/logs remain in the observability stack; SQL Server only stores IDs to cross-link.
+### 4.2 Code for FastAPI Service
 
----
+- **Core service**: `battleship.api.server` (FastAPI app wiring REST + WebSocket routes, middleware, dependencies).
+- **Match orchestrator**: background tasks or worker modules driving matches/training (described under “Match Orchestrator” above).
+- **Remote agents**: `/api/agents` routers managing registry, callback invocation, and ladder updates.
+- **Testing**: `tests/ai/*` covers DQN logic, replay buffers, epsilon-greedy behavior; `tests/telemetry/*` ensures instrumentation wiring.
 
-## 8. Authentication (Auth0 + JWT)
+### 4.3 Code for Engine & Gymnasium Components
 
-- **Identity Provider**: Auth0 handles sign-up/login via a hosted login page or Auth0 JS SDK.
-- **Frontend flow**:
-  1. User authenticates with Auth0.
-  2. The browser receives an ID token (JWT) and access token.
-  3. All REST and WebSocket requests include `Authorization: Bearer <JWT>`.
-- **Backend responsibilities** (FastAPI middleware):
-  - Validate JWT signature using Auth0 JWKS, issuer (`iss`), audience (`aud`), and expiry (`exp`).
-  - Map `(auth_provider, sub)` to an internal `user_id` stored in SQL Server (creating a row on first login).
-  - Attach the `user_id` to request context so handlers enforce authorization.
-- Protected endpoints (rooms, matches, agents, training jobs) reject requests without a valid token; public endpoints (e.g., ladder view) can allow anonymous access.
+- **Engine**: `BattleshipGame`, `Board`, `Ship`, and `InstrumentedBattleshipGame` classes implementing deterministic behavior and telemetry hooks.
+- **Gymnasium env**: `BattleshipEnv` bridging the engine with RL interfaces.
+- **Trainer/Agent**: `DQNTrainer`, `DQNAgent`, and `InstrumentedDQNAgent` implementing dueling CNN architecture, replay buffer, target sync, telemetry instrumentation.
 
----
+### 4.4 Code for SQL Server Schema
 
-## 9. Game Modes & Orchestration
+- Schema migrations and models capturing Users, Rooms, Matches, MatchMoves, Agents, AgentRatings, TrainingJobs, and Replay references.
+- > TODO: Add direct references to ORM models or migration files once stabilized.
 
-1. **Human vs AI**
-   - Player connects via web UI (primary) or Pygame/CLI.
-   - Backend creates a match with the chosen agent (internal DQN, instrumented agent, or registered remote agent).
-   - Client submits moves via REST (`POST /api/matches/{id}/move`) while receiving state snapshots/events via WebSocket.
-   - Server enforces legality, applies moves to the engine, and broadcasts updates.
+### 4.5 Code for Telemetry & Observability
 
-2. **Human vs Human (networked)**
-   - Lobby exposes rooms (room_id, status, owner). Players create/join via REST; lobby WebSocket publishes updates.
-   - When a room is “ready”, FastAPI spins up a match, subscribes both players (and optional spectators) to `/ws/matches/{id}`, and manages turn order.
-   - Backend validates every move, persists it to SQL Server, and notifies all participants.
-
-3. **AI vs AI**
-   - Match orchestrator launches matches between two agents (internal or remote).
-   - Loop: build observation → request action → validate/apply via engine → record telemetry.
-   - On completion, orchestrator stores the replay (MatchMoves), updates AgentRatings, and publishes ladder updates.
+- `battleship.telemetry.tracer` / `metrics` / `logger` modules expose initializer helpers.
+- `init_telemetry` (and `init_*` variants) configure OTLP exporters or console fallbacks.
+- Web UI telemetry wiring will leverage OpenTelemetry JS SDK (page views, API calls, WS events).
 
 ---
 
-## 10. Remote Agents
+## 5. Cross-Cutting Concerns
 
-- Agents are registered via `/api/agents` with `agent_id`, name, type (`internal`, `remote`), optional callback URL, and metadata.
-- **Remote agent protocol**:
-  - For each turn, backend POSTs to the agent’s callback URL with JSON: `{ match_id, player_role, turn_index, observation, legal_actions }`.
-  - Observation contains board tensors, last move summaries, and any additional features agreed upon.
-  - Agent responds with `{ action: { row, col }, metadata? }`.
-  - Backend validates legality/timeouts; illegal actions trigger retries, default moves, or forfeits per policy.
-- Remote agents extend the RL architecture by allowing external services (written in any language) to participate in ladder matches or human-vs-AI games, while internal agents continue to rely on the Gymnasium/DQN stack.
+### 5.1 Security & Auth
 
----
+- Auth0 handles signup/login; browser receives JWTs and sends `Authorization: Bearer <JWT>` headers for REST/WebSocket upgrades.
+- FastAPI middleware validates JWT signature via Auth0 JWKS, issuer, audience, and expiry; maps to internal SQL users and enforces authorization per endpoint.
+- Protected endpoints (rooms, matches, agents, training jobs) require valid tokens; anonymous access limited to public ladder views.
 
-## 11. Ladder & Stats
+### 5.2 Observability & Telemetry
 
-- After every AI-vs-AI match (or optionally human-vs-AI), the backend updates AgentRatings using an ELO/TrueSkill-style system stored in SQL Server.
-- **Ladder view** (web UI):
-  - Fetches `/api/ladder`, listing agents with rating, wins/losses/draws, streaks, and references to the latest matches.
-  - Links to `/api/agents/{agent_id}` for detailed stats, replay list, training history, and configuration.
-- Ratings and stats drive matchmaking (e.g., pairing similar-strength agents) and provide transparency for users evaluating models.
+- OTEL spans wrap API calls, match orchestration, remote agent decisions, training jobs, and UI interactions.
+- Metrics capture move latency per agent, win/loss rates per mode, queue depth, and training KPIs.
+- Logs record validation errors, timeouts, matchmaking decisions; SQL rows store trace IDs for deep links from UI (“View Trace” actions).
 
----
+### 5.3 Performance & Scalability
 
-## 12. Replays & Observability
+> TODO: Document scalability plans (e.g., FastAPI worker scaling, orchestrator throughput, database sharding/replication) and performance tuning strategies.
 
-- **Replays**:
-  - Every move (row, col, result, timestamp) persists to SQL Server (`MatchMoves`).
-  - Web UI fetches `/api/ai-matches/{match_id}/replay` (or equivalent human match endpoint) and plays it on Canvas, replicating hits/misses with animations.
-  - Pygame/CLI can request the same data for textual playback.
-- **Observability**:
-  - OTEL spans wrap match lifecycle, agent decision requests (internal & remote), training jobs, and UI interactions (via OTEL JS SDK).
-  - Metrics track move latency per agent, win/loss rates per mode, queue depth for orchestrator, training KPIs.
-  - Logs capture validation errors, remote agent timeouts, matchmaking decisions.
-  - SQL Server stores trace IDs alongside matches/training jobs so the UI can deep-link to dashboards (e.g., “View Trace” button opening Grafana/Tempo).
+### 5.4 Testing Strategy
+
+- GitHub Actions workflow (`.github/workflows/ci.yml`) runs lint → type-check → pytest (coverage upload to Codecov) across Python 3.10/3.11, keeping graphical dependencies headless-safe.
+- `requirements-dev.txt` pins developer tools (ruff, black, mypy, pytest, gymnasium, fastapi, uvicorn, numpy<2).
+- Future web-specific lint/tests will integrate once the web UI codebase merges.
 
 ---
 
-## 13. Test & Tooling Layout
+## 6. Deployment View
+
+### 6.1 Runtime / Environment Overview
+
+> TODO: Describe runtime environments (local dev, CI, production), including how FastAPI, trainer workers, and SQL Server are hosted.
+
+### 6.2 Docker / Compose / K8s
+
+> TODO: Capture containerization, orchestration, and infrastructure-as-code details (Dockerfiles, Compose stacks, Kubernetes manifests).
+
+### 6.3 Environments (dev/test/prod)
+
+> TODO: List environment-specific configurations (Auth0 tenants, SQL instances, OTLP endpoints) and deployment pipelines.
 
 ---
 
-## 6. Test & Tooling Layout
+## 7. Roadmap / Future Work
 
-- `tests/ai/*`: covers DQN tensor shapes, replay buffer, epsilon-greedy logic.
-- `tests/telemetry/*`: ensures spans/metrics/loggers initialize lazily and instrumentation hooks fire.
-- GitHub Actions workflow (`.github/workflows/ci.yml`) runs lint → type-check → pytest (with `SDL_VIDEODRIVER=dummy`, coverage upload to Codecov) across Python 3.10/3.11.
-- `requirements-dev.txt` pins developer tools (ruff, black, mypy, pytest, pygame, gymnasium, fastapi, uvicorn, numpy<2).
-- Future web-specific tooling (front-end lint/tests) will integrate into the same pipeline once the web UI repo is merged.
+- **API Layer** (`battleship.api.server`): Core FastAPI service described above; background workers (Celery, Dramatiq, etc.) may be introduced for heavy training/match orchestration.
+- **Web UI Goal**: `WEB_UI_README.md` outlines the plan for the browser client, replay tooling, and observability integration; this document now mirrors that target architecture.
+- Future enhancements include Kubernetes manifests, remote agent SDKs, extended telemetry dashboards, and richer replay/analysis tooling.
 
----
-
-## 14. API Surface (REST + WebSocket)
-
-**Authentication / Identity**
-- All protected endpoints expect `Authorization: Bearer <JWT>` (Auth0-issued).
-- `GET /api/me` returns the authenticated user’s profile + internal `user_id`.
-
-**Users**
-- `GET /api/users/{user_id}` (or `/api/me`) returns display name, avatar, linked agents. Used for profile pages and attribution (e.g., room owners).
-
-**Lobby**
-- `GET /api/lobby/rooms` – list open rooms with filters (mode, capacity).
-- `POST /api/lobby/rooms` – create a room (requires auth).
-- `POST /api/lobby/rooms/{room_id}/join` – join an existing room.
-- `POST /api/lobby/rooms/{room_id}/leave` – leave a room.
-- `WebSocket /ws/lobby` – push room created/updated/deleted events, player join/leave notifications so the lobby UI stays live without polling.
-
-**Matches (human-involved)**
-- `POST /api/matches` – create a match (`mode`, opponent/agent IDs, settings).
-- `GET /api/matches/{match_id}` – fetch current state (boards, turn, history summary).
-- `POST /api/matches/{match_id}/move` – submit a move for the authenticated player.
-- `WebSocket /ws/matches/{match_id}` – stream real-time events (state snapshots, move outcomes, chat, game-over).
-
-**AI vs AI Matches**
-- `POST /api/ai-matches` – schedule an AI vs AI match (two agent IDs, optional seeds/config).
-- `GET /api/ai-matches/{match_id}` – status/progress.
-- `GET /api/ai-matches/{match_id}/replay` – complete move transcript for replay viewers.
-
-**Agents & Ladder**
-- `POST /api/agents` – register a new agent (internal metadata or remote callback URL).
-- `GET /api/agents` – list agents (filter by owner/type).
-- `GET /api/agents/{agent_id}` – detailed info (type, callback, rating, stats, training runs).
-- `GET /api/ladder` – aggregated ranking for the ladder view.
-
-**Training**
-- `POST /api/training-jobs` – start a training job (hyperparameters, env config, target agent).
-- `GET /api/training-jobs` – list jobs (optionally filtered by user).
-- `GET /api/training-jobs/{job_id}` – job details, metrics, checkpoint references.
-
-These endpoints power the browser UI (rooms, matches, ladder, training console) and are also used by alternative clients. WebSockets ensure responsive lobby/match experiences; REST handles idempotent operations and administrative tasks.
-
----
-
-## 15. Roadmap Hooks
-
-- **API Layer** (`battleship.api.server`): now the core FastAPI service described above; additional background workers (Celery, Dramatiq) can be added for heavy training/match orchestration.
-- **Web UI Goal**: `WEB_UI_README.md` captures the multi-step plan for the browser client, replay tooling, and observability integration; this document now reflects those target architectures.
-- Future work includes Kubernetes manifests, remote agent SDKs, and extended telemetry dashboards.
-
-This architecture keeps core game logic deterministic on the backend, enables multiple clients (browser, Pygame, CLI), supports RL experimentation, and lays the groundwork for a fully observable, competitive Battleship platform with ranked agents and human participation.
+This architecture keeps core game logic deterministic on the backend, powers a single browser-based client, supports RL experimentation, and lays the groundwork for a fully observable, competitive Battleship platform with ranked agents and human participation.
