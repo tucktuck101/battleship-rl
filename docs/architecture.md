@@ -384,7 +384,7 @@ flowchart LR
 
     Tracer --> OTLP["OTLP Trace Exporter / Console"]
     Meter --> OTLP
-    Logger --> OTLP Logs
+    Logger --> OTLPLogs["OTLP Logs"]
 ```
 
 - Python modules expose singleton tracer/meter/logger initializers.
