@@ -4,6 +4,7 @@ networks:
 volumes:
   tempo-data:
   loki-data:
+  alloy-data:
 
 services:
   trainer:
@@ -11,37 +12,42 @@ services:
       context: .
       dockerfile: Dockerfile.trainer
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://grafana-alloy:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_RESOURCE_ATTRIBUTES: "service.name=battleship-trainer,service.namespace=ml"
     volumes:
       - ./training_artifacts:/app/training_artifacts
     depends_on:
-      - otel-collector
+      - grafana-alloy
     networks:
       - monitoring
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+  grafana-alloy:
+    image: grafana/alloy:latest
     command:
-      - "--config=/etc/otel-collector/config.yaml"
+      - "run"
+      - "/etc/alloy/config.river"
+      - "--storage.path=/var/lib/alloy"
     ports:
       - "4317:4317"
       - "4318:4318"
-      - "9464:9464"
     volumes:
-      - ./ops/otel/config.yaml:/etc/otel-collector/config.yaml:ro
+      - ./ops/alloy/config.river:/etc/alloy/config.river:ro
+      - alloy-data:/var/lib/alloy
     networks:
       - monitoring
 
   prometheus:
     image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.enable-remote-write-receiver"
     ports:
       - "9090:9090"
     volumes:
       - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     depends_on:
-      - otel-collector
+      - grafana-alloy
     networks:
       - monitoring
 
@@ -53,28 +59,5 @@ services:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
-      - tempo
-      - loki
     networks:
       - monitoring
-
-  tempo:
-    image: grafana/tempo:latest
-    command:
-      - -config.file=/etc/tempo/tempo.yaml
-    ports:
-      - "3200:3200"
-    volumes:
-      - ./ops/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
-      - tempo-data:/var/tempo
-    networks:
-      - monitoring
-
-  loki:
-    image: grafana/loki:latest
-    networks:
-      monitoring: null
-    ports:
-      - "3100:3100"
-    volumes:
-      - loki-data:/var/loki

@@ -1,5 +1,5 @@
 ==== SYSTEM INFO ====
-Fri Nov 14 22:04:21 NZDT 2025
+Fri Nov 14 23:40:30 NZDT 2025
 
 ---- OS ----
 Darwin Jeffs-MacBook-Pro.local 24.6.0 Darwin Kernel Version 24.6.0: Mon Aug 11 21:16:05 PDT 2025; root:xnu-11417.140.69.701.11~1/RELEASE_X86_64 x86_64
@@ -44,13 +44,13 @@ name: battleship-rl
 services:
   grafana:
     depends_on:
-      loki:
+      # loki removed for compute savings:
         condition: service_started
         required: true
       prometheus:
         condition: service_started
         required: true
-      tempo:
+      # tempo removed for compute savings:
         condition: service_started
         required: true
     image: grafana/grafana:latest
@@ -68,24 +68,12 @@ services:
         read_only: true
         bind:
           create_host_path: true
-  loki:
-    image: grafana/loki:latest
-    networks:
-      monitoring: null
-    ports:
-      - mode: ingress
-        target: 3100
-        published: "3100"
-        protocol: tcp
-    volumes:
-      - type: volume
-        source: loki-data
-        target: /var/loki
-        volume: {}
-  otel-collector:
+  grafana-alloy:
     command:
-      - --config=/etc/otel-collector/config.yaml
-    image: otel/opentelemetry-collector-contrib:latest
+      - run
+      - /etc/alloy/config.river
+      - --storage.path=/var/lib/alloy
+    image: grafana/alloy:latest
     networks:
       monitoring: null
     ports:
@@ -97,20 +85,37 @@ services:
         target: 4318
         published: "4318"
         protocol: tcp
-      - mode: ingress
-        target: 9464
-        published: "9464"
-        protocol: tcp
     volumes:
       - type: bind
-        source: /Users/jeff/dev_projects/Python_refresh/Battleships/battleship-rl/ops/otel/config.yaml
-        target: /etc/otel-collector/config.yaml
+        source: /Users/jeff/dev_projects/Python_refresh/Battleships/battleship-rl/ops/alloy/config.river
+        target: /etc/alloy/config.river
         read_only: true
         bind:
           create_host_path: true
+      - type: volume
+        source: alloy-data
+        target: /var/lib/alloy
+        volume: {}
+  # loki removed for compute savings:
+    image: grafana/# loki removed for compute savings:latest
+    networks:
+      monitoring: null
+    ports:
+      - mode: ingress
+        target: 3100
+        published: "3100"
+        protocol: tcp
+    volumes:
+      - type: volume
+        source: # loki removed for compute savings-data
+        target: /var/# loki removed for compute savings
+        volume: {}
   prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
     depends_on:
-      otel-collector:
+      grafana-alloy:
         condition: service_started
         required: true
     image: prom/prometheus:latest
@@ -128,10 +133,10 @@ services:
         read_only: true
         bind:
           create_host_path: true
-  tempo:
+  # tempo removed for compute savings:
     command:
-      - -config.file=/etc/tempo/tempo.yaml
-    image: grafana/tempo:latest
+      - -config.file=/etc/# tempo removed for compute savings/# tempo removed for compute savings.yaml
+    image: grafana/# tempo removed for compute savings:latest
     networks:
       monitoring: null
     ports:
@@ -141,25 +146,25 @@ services:
         protocol: tcp
     volumes:
       - type: bind
-        source: /Users/jeff/dev_projects/Python_refresh/Battleships/battleship-rl/ops/tempo/tempo.yaml
-        target: /etc/tempo/tempo.yaml
+        source: /Users/jeff/dev_projects/Python_refresh/Battleships/battleship-rl/ops/# tempo removed for compute savings/# tempo removed for compute savings.yaml
+        target: /etc/# tempo removed for compute savings/# tempo removed for compute savings.yaml
         read_only: true
         bind:
           create_host_path: true
       - type: volume
-        source: tempo-data
-        target: /var/tempo
+        source: # tempo removed for compute savings-data
+        target: /var/# tempo removed for compute savings
         volume: {}
   trainer:
     build:
       context: /Users/jeff/dev_projects/Python_refresh/Battleships/battleship-rl
       dockerfile: Dockerfile.trainer
     depends_on:
-      otel-collector:
+      grafana-alloy:
         condition: service_started
         required: true
     environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://grafana-alloy:4317
       OTEL_EXPORTER_OTLP_PROTOCOL: grpc
       OTEL_RESOURCE_ATTRIBUTES: service.name=battleship-trainer,service.namespace=ml
     networks:
@@ -174,17 +179,19 @@ networks:
   monitoring:
     name: battleship-rl_monitoring
 volumes:
-  loki-data:
-    name: battleship-rl_loki-data
-  tempo-data:
-    name: battleship-rl_tempo-data
+  alloy-data:
+    name: battleship-rl_alloy-data
+  # loki removed for compute savings-data:
+    name: battleship-rl_# loki removed for compute savings-data
+  # tempo removed for compute savings-data:
+    name: battleship-rl_# tempo removed for compute savings-data
 
 ==== COMPOSE PS (current state) ====
 NAME      IMAGE     COMMAND   SERVICE   CREATED   STATUS    PORTS
 
 ==== DOCKER NETWORKS ====
 NETWORK ID     NAME                       DRIVER    SCOPE
-c66afa9b1c2a   battleship-rl_monitoring   bridge    local
+bff0e21a3cf2   battleship-rl_monitoring   bridge    local
 f1012637cbd3   bridge                     bridge    local
 8c3af435de3b   host                       host      local
 ca20d8447dbf   kind                       bridge    local
@@ -195,8 +202,8 @@ Inspecting network: battleship-rl_monitoring
 [
     {
         "Name": "battleship-rl_monitoring",
-        "Id": "c66afa9b1c2a6b715ccd5b3b9cd8b270bd9e8651ef80d482a34e188657d1e782",
-        "Created": "2025-11-14T07:49:39.460081831Z",
+        "Id": "bff0e21a3cf233974df45f20e2e0c39f8372065f062a2e9101c6ea2f875b5606",
+        "Created": "2025-11-14T10:29:48.311496255Z",
         "Scope": "local",
         "Driver": "bridge",
         "EnableIPv4": true,
@@ -234,826 +241,237 @@ Inspecting network: battleship-rl_monitoring
 
 ==== CONTAINER IDS (from compose) ====
 trainer: <no container>
-otel-collector: <no container>
-tempo: <no container>
-loki: <no container>
+grafana-alloy: <no container>
+# tempo removed for compute savings: <no container>
+# loki removed for compute savings: <no container>
 prometheus: <no container>
 grafana: <no container>
 
-==== OTEL-COLLECTOR LOGS (last 200 lines) ====
-otel-collector-1  | Error: failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):
-otel-collector-1  |
-otel-collector-1  | 'exporters' unknown type: "loki" for id: "loki" (valid values: [prometheusremotewrite syslog tinybird otlphttp awskinesis azuredataexplorer coralogix elasticsearch faro logzio mezmo debug awsemf carbon dataset file googlemanagedprometheus influxdb pulsar alibabacloud_logservice azuremonitor clickhouse honeycombmarker rabbitmq sentry stef tencentcloud_logservice otlp awsxray bmchelix opensearch signalfx splunk_hec zipkin awscloudwatchlogs prometheus sapm sumologic awss3 cassandra datadog googlecloudpubsub logicmonitor otelarrow nop kafka azureblob doris googlecloud loadbalancing])
-otel-collector-1  | 2025/11/14 08:45:55 collector server run finished with error: failed to get config: cannot unmarshal the configuration: decoding failed due to the following error(s):
-otel-collector-1  |
-otel-collector-1  | 'exporters' unknown type: "loki" for id: "loki" (valid values: [prometheusremotewrite syslog tinybird otlphttp awskinesis azuredataexplorer coralogix elasticsearch faro logzio mezmo debug awsemf carbon dataset file googlemanagedprometheus influxdb pulsar alibabacloud_logservice azuremonitor clickhouse honeycombmarker rabbitmq sentry stef tencentcloud_logservice otlp awsxray bmchelix opensearch signalfx splunk_hec zipkin awscloudwatchlogs prometheus sapm sumologic awss3 cassandra datadog googlecloudpubsub logicmonitor otelarrow nop kafka azureblob doris googlecloud loadbalancing])
-otel-collector-1  | 2025-11-14T08:53:02.322Z	info	service@v0.139.0/service.go:222	Starting otelcol-contrib...	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "Version": "0.139.0", "NumCPU": 12}
-otel-collector-1  | 2025-11-14T08:53:02.323Z	info	extensions/extensions.go:40	Starting extensions...	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}}
-otel-collector-1  | 2025-11-14T08:53:02.325Z	info	otlpreceiver@v0.139.0/otlp.go:120	Starting GRPC server	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp", "otelcol.component.kind": "receiver", "endpoint": "[::]:4317"}
-otel-collector-1  | 2025-11-14T08:53:02.325Z	info	otlpreceiver@v0.139.0/otlp.go:178	Starting HTTP server	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp", "otelcol.component.kind": "receiver", "endpoint": "[::]:4318"}
-otel-collector-1  | 2025-11-14T08:53:02.325Z	info	service@v0.139.0/service.go:245	Everything is ready. Begin running and processing data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}}
-otel-collector-1  | 2025-11-14T08:53:02.327Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:03.329Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:05.090Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:06.766Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "3.971311309s"}
-otel-collector-1  | 2025-11-14T08:53:07.168Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "4.279732322s"}
-otel-collector-1  | 2025-11-14T08:53:07.771Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "6.911912349s"}
-otel-collector-1  | 2025-11-14T08:53:07.775Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:08.173Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "5.76734984s"}
-otel-collector-1  | 2025-11-14T08:53:08.779Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "2.720355091s"}
-otel-collector-1  | 2025-11-14T08:53:09.986Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "4.971505902s"}
-otel-collector-1  | 2025-11-14T08:53:10.738Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "9.735081415s"}
-otel-collector-1  | 2025-11-14T08:53:10.789Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "3.719193479s"}
-otel-collector-1  | 2025-11-14T08:53:11.394Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "6.305537868s"}
-otel-collector-1  | 2025-11-14T08:53:11.448Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.599129856s"}
-otel-collector-1  | 2025-11-14T08:53:11.746Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:17.700Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.712746249s"}
-otel-collector-1  | 2025-11-14T08:53:18.904Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.104852391s"}
-otel-collector-1  | 2025-11-14T08:53:19.004Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.72831857s"}
-otel-collector-1  | 2025-11-14T08:53:19.317Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.993244365s"}
-otel-collector-1  | 2025-11-14T08:53:19.426Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:19.668Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "9.264455894s"}
-otel-collector-1  | 2025-11-14T08:53:20.051Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "16.803152039s"}
-otel-collector-1  | 2025-11-14T08:53:20.477Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "7.397211303s"}
-otel-collector-1  | 2025-11-14T08:53:20.616Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "9.265355821s"}
-otel-collector-1  | 2025-11-14T08:53:22.591Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.128291731s"}
-otel-collector-1  | 2025-11-14T08:53:24.949Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "13.147596516s"}
-otel-collector-1  | 2025-11-14T08:53:27.734Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "23.372544118s"}
-otel-collector-1  | 2025-11-14T08:53:27.875Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "21.301523703s"}
-otel-collector-1  | 2025-11-14T08:53:28.311Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "8.086695147s"}
-otel-collector-1  | 2025-11-14T08:53:28.937Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "13.307352217s"}
-otel-collector-1  | 2025-11-14T08:53:29.885Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "14.126723543s"}
-otel-collector-1  | 2025-11-14T08:53:30.726Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "17.939927405s"}
-otel-collector-1  | 2025-11-14T08:53:31.537Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:36.400Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "22.394860008s"}
-otel-collector-1  | 2025-11-14T08:53:36.855Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "9.690989977s"}
-otel-collector-1  | 2025-11-14T08:53:37.942Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "9.921203279s"}
-otel-collector-1  | 2025-11-14T08:53:38.099Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "17.771430822s"}
-otel-collector-1  | 2025-11-14T08:53:42.249Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "11.975093744s"}
-otel-collector-1  | 2025-11-14T08:53:43.591Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "13.43477147s"}
-otel-collector-1  | 2025-11-14T08:53:44.015Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "28.511041591s"}
-otel-collector-1  | 2025-11-14T08:53:46.550Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "16.369413041s"}
-otel-collector-1  | 2025-11-14T08:53:47.869Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "30.734329623s"}
-otel-collector-1  | 2025-11-14T08:53:48.667Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "23.995430476s"}
-otel-collector-1  | 2025-11-14T08:53:49.155Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:53:49.179Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "16.678292479s"}
-otel-collector-1  | 2025-11-14T08:53:51.109Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "33.23736648s"}
-otel-collector-1  | 2025-11-14T08:53:54.226Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "32.167653161s"}
-otel-collector-1  | 2025-11-14T08:53:55.871Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "37.643870331s"}
-otel-collector-1  | 2025-11-14T08:53:57.028Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "36.784663266s"}
-otel-collector-1  | 2025-11-14T08:53:58.796Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "31.804873474s"}
-otel-collector-1  | 2025-11-14T08:54:02.922Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "17.172533788s"}
-otel-collector-1  | 2025-11-14T08:54:05.862Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "21.089595027s"}
-otel-collector-1  | 2025-11-14T08:54:12.529Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "35.232331144s"}
-otel-collector-1  | 2025-11-14T08:54:12.664Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "18.955311635s"}
-otel-collector-1  | 2025-11-14T08:54:13.908Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:54:18.606Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "31.749477033s"}
-otel-collector-1  | 2025-11-14T08:54:20.096Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "38.396949839s"}
-otel-collector-1  | 2025-11-14T08:54:24.349Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "43.950533193s"}
-otel-collector-1  | 2025-11-14T08:54:26.395Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "41.057881918s"}
-otel-collector-1  | 2025-11-14T08:54:26.953Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "30.458417038s"}
-otel-collector-1  | 2025-11-14T08:54:30.604Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "32.04512336s"}
-otel-collector-1  | 2025-11-14T08:54:31.621Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "25.265001043s"}
-otel-collector-1  | 2025-11-14T08:54:33.518Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "31.034943595s"}
-otel-collector-1  | 2025-11-14T08:54:33.819Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "44.524677754s"}
-otel-collector-1  | 2025-11-14T08:54:47.759Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "36.267043886s"}
-otel-collector-1  | 2025-11-14T08:54:50.353Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "35.95638136s"}
-otel-collector-1  | 2025-11-14T08:54:52.495Z	warn	grpc@v1.76.0/clientconn.go:1407	[core] [Channel #1 SubChannel #2] grpc: addrConn.createTransport failed to connect to {Addr: "tempo:4317", ServerName: "tempo:4317", }. Err: connection error: desc = "transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused"	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "grpc_log": true}
-otel-collector-1  | 2025-11-14T08:54:56.883Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "23.660675351s"}
-otel-collector-1  | 2025-11-14T08:54:57.410Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "43.938331762s"}
-otel-collector-1  | 2025-11-14T08:54:58.491Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "23.013143768s"}
-otel-collector-1  | 2025-11-14T08:55:02.649Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "36.851065145s"}
-otel-collector-1  | 2025-11-14T08:55:03.708Z	info	otelcol@v0.139.0/collector.go:370	Received signal from OS	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "signal": "terminated"}
-otel-collector-1  | 2025-11-14T08:55:03.709Z	info	service@v0.139.0/service.go:259	Starting shutdown...	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}}
-otel-collector-1  | 2025-11-14T08:55:03.710Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 512}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.710Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "6.384637748s"}
-otel-collector-1  | 2025-11-14T08:55:03.710Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 1}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.710Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "6.630848156s"}
-otel-collector-1  | 2025-11-14T08:55:03.710Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 269}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "5.180444525s"}
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 116}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "3.18827154s"}
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 156}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "5.224938586s"}
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 1}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 512}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "6.720782961s"}
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 132}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "5.789254769s"}
-otel-collector-1  | 2025-11-14T08:55:03.712Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 3}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	error	internal/queue_sender.go:49	Exporting failed. Dropping data.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "interrupted due to shutdown: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "dropped_items": 512}
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal.NewQueueSender.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue_sender.go:49
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch.(*disabledBatcher[...]).Consume
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queuebatch/disabled_batcher.go:23
-otel-collector-1  | go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue.(*asyncQueue[...]).Start.func1
-otel-collector-1  | 	go.opentelemetry.io/collector/exporter/exporterhelper@v0.139.0/internal/queue/async_queue.go:49
-otel-collector-1  | 2025-11-14T08:55:03.711Z	info	internal/retry_sender.go:133	Exporting failed. Will retry the request after interval.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}, "otelcol.component.id": "otlp/tempo", "otelcol.component.kind": "exporter", "otelcol.signal": "traces", "error": "rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 172.19.0.3:4317: connect: connection refused\"", "interval": "2.98809627s"}
-otel-collector-1  | 2025-11-14T08:55:03.712Z	info	extensions/extensions.go:68	Stopping extensions...	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}}
-otel-collector-1  | 2025-11-14T08:55:03.719Z	info	service@v0.139.0/service.go:273	Shutdown complete.	{"resource": {"service.instance.id": "30f5107e-9eeb-4e40-b13c-be28229599bc", "service.name": "otelcol-contrib", "service.version": "0.139.0"}}
+==== GRAFANA ALLOY LOGS (last 200 lines) ====
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:29:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 28 |     traces = {
+grafana-alloy-1  | 29 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:30:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 29 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 31 |       exporters = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:31:54: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 31 |       exporters = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 32 |     }
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:32:6: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 31 |       exporters = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+grafana-alloy-1  | 32 |     }
+grafana-alloy-1  |    |
+grafana-alloy-1  | 33 |     metrics = {
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:34:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 33 |     metrics = {
+grafana-alloy-1  | 34 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:35:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 34 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 36 |       exporters = [otelcol.exporter.prometheus.default.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:36:62: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 36 |       exporters = [otelcol.exporter.prometheus.default.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 37 |     }
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:37:6: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 36 |       exporters = [otelcol.exporter.prometheus.default.input]
+grafana-alloy-1  | 37 |     }
+grafana-alloy-1  |    |
+grafana-alloy-1  | 38 |     logs = {
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:39:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 38 |     logs = {
+grafana-alloy-1  | 39 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:40:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 39 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:41:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 42 |     }
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:42:6: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  | 42 |     }
+grafana-alloy-1  |    |
+grafana-alloy-1  | 43 |   }
+grafana-alloy-1  | interrupt received
+grafana-alloy-1  | Error: could not perform the initial load successfully
+grafana-alloy-1  | Error: /etc/alloy/config.river:29:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 28 |     traces = {
+grafana-alloy-1  | 29 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:30:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 29 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 31 |       exporters = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:31:54: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 30 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 31 |       exporters = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 32 |     },
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:34:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 33 |     metrics = {
+grafana-alloy-1  | 34 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:35:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 34 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 36 |       exporters = [otelcol.exporter.prometheus.default.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:36:62: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 35 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 36 |       exporters = [otelcol.exporter.prometheus.default.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 37 |     },
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:39:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 38 |     logs = {
+grafana-alloy-1  | 39 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:40:60: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 39 |       receivers = [otelcol.receiver.otlp.default.output]
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:41:57: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 40 |       processors = [otelcol.processor.batch.default.output]
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  |    |
+grafana-alloy-1  | 42 |     }
+grafana-alloy-1  |
+grafana-alloy-1  | Error: /etc/alloy/config.river:42:6: missing ',' in field list
+grafana-alloy-1  |
+grafana-alloy-1  | 41 |       exporters = [otelcol.exporter.otlphttp.# loki removed for compute savings.input]
+grafana-alloy-1  | 42 |     }
+grafana-alloy-1  |    |
+grafana-alloy-1  | 43 |   }
+grafana-alloy-1  | interrupt received
+grafana-alloy-1  |
+grafana-alloy-1  | Error: could not perform the initial load successfully
 
 ==== TEMPO LOGS (last 200 lines) ====
-tempo-1  | level=info ts=2025-11-14T08:45:56.270041529Z caller=module_service.go:82 msg=starting module=internal-server
-tempo-1  | level=info ts=2025-11-14T08:45:56.269116843Z caller=module_service.go:82 msg=starting module=cache-provider
-tempo-1  | level=info ts=2025-11-14T08:45:56.271800852Z caller=module_service.go:82 msg=starting module=store
-tempo-1  | level=info ts=2025-11-14T08:45:56.272024599Z caller=module_service.go:82 msg=starting module=server
-tempo-1  | level=info ts=2025-11-14T08:45:56.272147947Z caller=module_service.go:82 msg=starting module=overrides
-tempo-1  | level=info ts=2025-11-14T08:45:56.272198185Z caller=module_service.go:82 msg=starting module=memberlist-kv
-tempo-1  | level=info ts=2025-11-14T08:45:56.272534286Z caller=module_service.go:82 msg=starting module=overrides-api
-tempo-1  | level=info ts=2025-11-14T08:45:56.280090029Z caller=module_service.go:82 msg=starting module=secondary-ring
-tempo-1  | level=info ts=2025-11-14T08:45:56.28016422Z caller=module_service.go:82 msg=starting module=metrics-generator-ring
-tempo-1  | level=info ts=2025-11-14T08:45:56.280695164Z caller=module_service.go:82 msg=starting module=live-store-ring
-tempo-1  | level=info ts=2025-11-14T08:45:56.280716791Z caller=module_service.go:82 msg=starting module=usage-report
-tempo-1  | level=info ts=2025-11-14T08:45:56.281681894Z caller=module_service.go:82 msg=starting module=ring
-tempo-1  | level=info ts=2025-11-14T08:45:56.283066299Z caller=module_service.go:82 msg=starting module=compactor
-tempo-1  | level=info ts=2025-11-14T08:45:56.283130785Z caller=module_service.go:82 msg=starting module=query-frontend
-tempo-1  | level=info ts=2025-11-14T08:45:56.28187186Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:45:56.283983082Z caller=tempodb.go:638 msg="polling enabled" interval=5m0s blocklist_concurrency=50
-tempo-1  | level=info ts=2025-11-14T08:45:56.281929191Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:45:56.281871796Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:45:56.289218584Z caller=module_service.go:82 msg=starting module=distributor
-tempo-1  | level=info ts=2025-11-14T08:45:56.291599719Z caller=module_service.go:82 msg=starting module=block-builder
-tempo-1  | level=info ts=2025-11-14T08:45:56.291873324Z caller=module_service.go:82 msg=starting module=ingester
-tempo-1  | level=info ts=2025-11-14T08:45:56.292467283Z caller=module_service.go:82 msg=starting module=metrics-generator
-tempo-1  | level=info ts=2025-11-14T08:45:56.292076036Z caller=poller.go:249 msg="blocklist poll complete" seconds=0.008024626
-tempo-1  | level=info ts=2025-11-14T08:45:56.293281741Z caller=compactor.go:157 msg="enabling compaction"
-tempo-1  | level=info ts=2025-11-14T08:45:56.294163107Z caller=tempodb.go:598 msg="compaction and retention enabled."
-tempo-1  | level=info ts=2025-11-14T08:45:56.292442037Z caller=ingester.go:412 msg="beginning wal replay"
-tempo-1  | level=info ts=2025-11-14T08:45:56.294171432Z caller=module_service.go:82 msg=starting module=querier
-tempo-1  | level=warn ts=2025-11-14T08:45:56.300966786Z caller=wal.go:103 msg="unowned file entry ignored during wal replay" file=blocks err=null
-tempo-1  | level=info ts=2025-11-14T08:45:56.301038268Z caller=ingester.go:450 msg="wal replay complete"
-tempo-1  | level=info ts=2025-11-14T08:45:56.301121339Z caller=ingester.go:464 msg="reloading local blocks" tenants=0
-tempo-1  | level=info ts=2025-11-14T08:45:56.301243856Z caller=lifecycler.go:693 msg="not loading tokens from file, tokens file path is empty"
-tempo-1  | level=info ts=2025-11-14T08:45:56.302569225Z caller=lifecycler.go:720 msg="instance not found in ring, adding with no tokens" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:45:56.305178387Z caller=worker.go:184 msg="adding connection" addr=127.0.0.1:9095
-tempo-1  | ts=2025-11-14T08:45:56Z level=info msg="Starting GRPC server" component=tempo endpoint=127.0.0.1:4317
-tempo-1  | level=info ts=2025-11-14T08:45:56.306803587Z caller=lifecycler.go:562 msg="auto-joining cluster after timeout" ring=ingester
-tempo-1  | ts=2025-11-14T08:45:56Z level=info msg="Starting HTTP server" component=tempo endpoint=127.0.0.1:4318
-tempo-1  | level=info ts=2025-11-14T08:45:56.310334906Z caller=app.go:216 msg="Tempo started"
-tempo-1  | level=info ts=2025-11-14T08:45:56.310893691Z caller=worker.go:250 msg="total worker concurrency updated" totalConcurrency=20
-tempo-1  | level=info ts=2025-11-14T08:50:56.304000178Z caller=poller.go:249 msg="blocklist poll complete" seconds=6.771e-05
-tempo-1  | level=info ts=2025-11-14T08:52:35.166035959Z caller=app.go:244 msg="=== received SIGINT/SIGTERM ===\n*** exiting"
-tempo-1  | level=info ts=2025-11-14T08:52:35.167458107Z caller=module_service.go:120 msg="module stopped" module=block-builder
-tempo-1  | level=info ts=2025-11-14T08:52:35.168214553Z caller=lifecycler.go:612 msg="lifecycler loop() exited gracefully" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:52:35.168276768Z caller=lifecycler.go:996 msg="changing instance state from" old_state=ACTIVE new_state=LEAVING ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:52:35.168787225Z caller=lifecycler.go:1099 msg="lifecycler entering final sleep before shutdown" final_sleep=0s
-tempo-1  | level=info ts=2025-11-14T08:52:35.169252451Z caller=lifecycler.go:664 msg="instance removed from the KV store" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:52:35.171987049Z caller=module_service.go:120 msg="module stopped" module=compactor
-tempo-1  | level=warn ts=2025-11-14T08:52:35.172977765Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.842369338s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.175418376Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.849090874s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.172973444Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.84577567s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.172978461Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.845978583s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.175781461Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.848362683s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.175986335Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.84579438s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.176117304Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.849147462s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:52:35.189913811Z caller=module_service.go:120 msg="module stopped" module=query-frontend
-tempo-1  | level=info ts=2025-11-14T08:52:35.190044373Z caller=module_service.go:120 msg="module stopped" module=metrics-generator
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190112763Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.863386403s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190216184Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.863079648s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190243737Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.862947674s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190317212Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.863508319s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190383995Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.85910491s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.190450001Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.861221937s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:52:35.192003151Z caller=module_service.go:120 msg="module stopped" module=ingester
-tempo-1  | level=error ts=2025-11-14T08:52:35.1920499Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193445693Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.194759233Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.828833901s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.192424191Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.864758223s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:52:35.192514365Z caller=module_service.go:120 msg="module stopped" module=overrides-api
-tempo-1  | level=error ts=2025-11-14T08:52:35.193413327Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193598472Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193623425Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193635981Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193645932Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=error ts=2025-11-14T08:52:35.193943836Z caller=frontend_processor.go:84 msg="error processing requests" address=127.0.0.1:9095 err="rpc error: code = Unknown desc = queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.199004472Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.827356887s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.199838947Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.830753834s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.199926964Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.872054948s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.199890185Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.832569768s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:52:35.199913474Z caller=server.go:1565 method=/frontend.Frontend/Process duration=6m38.873559881s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:52:35.202768203Z caller=module_service.go:120 msg="module stopped" module=distributor
-tempo-1  | level=info ts=2025-11-14T08:52:35.2069594Z caller=module_service.go:120 msg="module stopped" module=optional-store
-tempo-1  | level=info ts=2025-11-14T08:52:35.207819429Z caller=frontend.go:333 msg="received shutdown notification from querier" querier=e4ee4655ab16
-tempo-1  | level=info ts=2025-11-14T08:52:35.209902863Z caller=module_service.go:120 msg="module stopped" module=querier
-tempo-1  | level=info ts=2025-11-14T08:52:35.209994263Z caller=module_service.go:120 msg="module stopped" module=usage-report
-tempo-1  | level=info ts=2025-11-14T08:52:35.210076601Z caller=module_service.go:120 msg="module stopped" module=live-store-ring
-tempo-1  | level=info ts=2025-11-14T08:52:35.210293Z caller=module_service.go:120 msg="module stopped" module=overrides
-tempo-1  | level=info ts=2025-11-14T08:52:35.21093345Z caller=module_service.go:120 msg="module stopped" module=secondary-ring
-tempo-1  | level=info ts=2025-11-14T08:52:35.213292913Z caller=module_service.go:120 msg="module stopped" module=store
-tempo-1  | level=info ts=2025-11-14T08:52:35.21342988Z caller=module_service.go:120 msg="module stopped" module=cache-provider
-tempo-1  | level=info ts=2025-11-14T08:52:35.214668997Z caller=module_service.go:120 msg="module stopped" module=metrics-generator-ring
-tempo-1  | level=info ts=2025-11-14T08:52:35.314922838Z caller=module_service.go:120 msg="module stopped" module=ring
-tempo-1  | level=info ts=2025-11-14T08:52:35.315717888Z caller=memberlist_client.go:892 msg="leaving memberlist cluster"
-tempo-1  | level=info ts=2025-11-14T08:52:35.322853363Z caller=module_service.go:120 msg="module stopped" module=memberlist-kv
-tempo-1  | level=info ts=2025-11-14T08:52:35.323154135Z caller=server_service.go:170 msg="server stopped"
-tempo-1  | level=info ts=2025-11-14T08:52:35.323202046Z caller=module_service.go:120 msg="module stopped" module=server
-tempo-1  | level=info ts=2025-11-14T08:52:35.323235677Z caller=module_service.go:120 msg="module stopped" module=internal-server
-tempo-1  | level=info ts=2025-11-14T08:52:35.323250843Z caller=app.go:217 msg="Tempo stopped"
-tempo-1  | level=info ts=2025-11-14T08:53:01.772055699Z caller=main.go:103 msg="Starting Tempo" version="(version=v2.9.0, branch=main, revision=ebc25e82d)" target=all
-tempo-1  | level=info ts=2025-11-14T08:53:01.773325498Z caller=cache.go:55 msg="caches available to storage backend" parquet-footer=false bloom=false parquet-offset-idx=false parquet-column-idx=false trace-id-index=false parquet-page=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.775152886Z caller=cache.go:55 msg="caches available to storage backend" parquet-footer=false bloom=false parquet-offset-idx=false parquet-column-idx=false trace-id-index=false parquet-page=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.794091125Z caller=server.go:284 msg="server listening on addresses" http=[::]:3200 grpc=[::]:9095
-tempo-1  | level=info ts=2025-11-14T08:53:01.799453502Z caller=memberlist_client.go:503 msg="Using memberlist cluster label and node name" cluster_label= node=e4ee4655ab16-129b202a
-tempo-1  | level=info ts=2025-11-14T08:53:01.799487054Z caller=frontend.go:90 msg="creating middleware in query frontend"
-tempo-1  | level=info ts=2025-11-14T08:53:01.799747532Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.799798951Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.79981758Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.799840099Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.799870181Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=info ts=2025-11-14T08:53:01.799887369Z caller=sync_handler_cache.go:131 msg="init frontend cache" role=frontend-search enabled=false
-tempo-1  | level=warn ts=2025-11-14T08:53:01.813556159Z caller=modules.go:456 msg="Worker address is empty in single binary mode. Attempting automatic worker configuration. If queries are unresponsive consider configuring the worker explicitly." address=127.0.0.1:9095
-tempo-1  | level=info ts=2025-11-14T08:53:01.814962263Z caller=worker.go:108 msg="Starting querier worker connected to query-frontend" frontend=127.0.0.1:9095
-tempo-1  | ts=2025-11-14T08:53:01Z level=info msg="OTel Shim Logger Initialized" component=tempo
-tempo-1  | level=warn ts=2025-11-14T08:53:01.824905227Z caller=modules.go:353 msg="metrics-generator is not configured." err="no metrics_generator.storage.path configured, metrics generator will be disabled"
-tempo-1  | level=info ts=2025-11-14T08:53:01.826013379Z caller=module_service.go:82 msg=starting module=internal-server
-tempo-1  | level=info ts=2025-11-14T08:53:01.826061812Z caller=module_service.go:82 msg=starting module=optional-store
-tempo-1  | level=info ts=2025-11-14T08:53:01.826555258Z caller=module_service.go:82 msg=starting module=cache-provider
-tempo-1  | level=info ts=2025-11-14T08:53:01.828489585Z caller=module_service.go:82 msg=starting module=server
-tempo-1  | level=info ts=2025-11-14T08:53:01.829081561Z caller=module_service.go:82 msg=starting module=store
-tempo-1  | level=info ts=2025-11-14T08:53:01.829181322Z caller=module_service.go:82 msg=starting module=memberlist-kv
-tempo-1  | level=info ts=2025-11-14T08:53:01.829310032Z caller=module_service.go:82 msg=starting module=overrides
-tempo-1  | level=info ts=2025-11-14T08:53:01.829433173Z caller=module_service.go:82 msg=starting module=live-store-ring
-tempo-1  | level=info ts=2025-11-14T08:53:01.829606121Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:53:01.829634758Z caller=module_service.go:82 msg=starting module=overrides-api
-tempo-1  | level=info ts=2025-11-14T08:53:01.830144233Z caller=module_service.go:82 msg=starting module=usage-report
-tempo-1  | level=info ts=2025-11-14T08:53:01.830208269Z caller=module_service.go:82 msg=starting module=ring
-tempo-1  | level=info ts=2025-11-14T08:53:01.829678699Z caller=module_service.go:82 msg=starting module=metrics-generator-ring
-tempo-1  | level=info ts=2025-11-14T08:53:01.830296924Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:53:01.830322828Z caller=ring.go:372 msg="ring doesn't exist in KV store yet"
-tempo-1  | level=info ts=2025-11-14T08:53:01.830639936Z caller=module_service.go:82 msg=starting module=metrics-generator
-tempo-1  | level=info ts=2025-11-14T08:53:01.830684555Z caller=module_service.go:82 msg=starting module=distributor
-tempo-1  | level=info ts=2025-11-14T08:53:01.830977727Z caller=module_service.go:82 msg=starting module=block-builder
-tempo-1  | level=info ts=2025-11-14T08:53:01.831010017Z caller=module_service.go:82 msg=starting module=compactor
-tempo-1  | level=info ts=2025-11-14T08:53:01.831176467Z caller=tempodb.go:638 msg="polling enabled" interval=5m0s blocklist_concurrency=50
-tempo-1  | level=info ts=2025-11-14T08:53:01.831384222Z caller=poller.go:249 msg="blocklist poll complete" seconds=0.000162825
-tempo-1  | level=info ts=2025-11-14T08:53:01.831417454Z caller=compactor.go:157 msg="enabling compaction"
-tempo-1  | level=info ts=2025-11-14T08:53:01.83147479Z caller=tempodb.go:598 msg="compaction and retention enabled."
-tempo-1  | level=info ts=2025-11-14T08:53:01.829376612Z caller=module_service.go:82 msg=starting module=secondary-ring
-tempo-1  | level=info ts=2025-11-14T08:53:01.831498483Z caller=module_service.go:82 msg=starting module=ingester
-tempo-1  | level=info ts=2025-11-14T08:53:01.831537186Z caller=ingester.go:412 msg="beginning wal replay"
-tempo-1  | level=info ts=2025-11-14T08:53:01.831459845Z caller=module_service.go:82 msg=starting module=query-frontend
-tempo-1  | level=warn ts=2025-11-14T08:53:01.832597539Z caller=wal.go:103 msg="unowned file entry ignored during wal replay" file=blocks err=null
-tempo-1  | level=info ts=2025-11-14T08:53:01.832631543Z caller=ingester.go:450 msg="wal replay complete"
-tempo-1  | level=info ts=2025-11-14T08:53:01.832808191Z caller=ingester.go:464 msg="reloading local blocks" tenants=0
-tempo-1  | level=info ts=2025-11-14T08:53:01.832961949Z caller=lifecycler.go:693 msg="not loading tokens from file, tokens file path is empty"
-tempo-1  | level=info ts=2025-11-14T08:53:01.833293443Z caller=lifecycler.go:720 msg="instance not found in ring, adding with no tokens" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:53:01.833583314Z caller=module_service.go:82 msg=starting module=querier
-tempo-1  | level=info ts=2025-11-14T08:53:01.833969554Z caller=lifecycler.go:562 msg="auto-joining cluster after timeout" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:53:01.834167147Z caller=worker.go:184 msg="adding connection" addr=127.0.0.1:9095
-tempo-1  | ts=2025-11-14T08:53:01Z level=info msg="Starting GRPC server" component=tempo endpoint=127.0.0.1:4317
-tempo-1  | ts=2025-11-14T08:53:01Z level=info msg="Starting HTTP server" component=tempo endpoint=127.0.0.1:4318
-tempo-1  | level=info ts=2025-11-14T08:53:01.842470512Z caller=app.go:216 msg="Tempo started"
-tempo-1  | level=info ts=2025-11-14T08:53:01.842903843Z caller=worker.go:250 msg="total worker concurrency updated" totalConcurrency=20
-tempo-1  | level=info ts=2025-11-14T08:55:02.794282412Z caller=app.go:244 msg="=== received SIGINT/SIGTERM ===\n*** exiting"
-tempo-1  | level=info ts=2025-11-14T08:55:02.794681363Z caller=lifecycler.go:612 msg="lifecycler loop() exited gracefully" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:55:02.803240081Z caller=lifecycler.go:996 msg="changing instance state from" old_state=ACTIVE new_state=LEAVING ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:55:02.805824087Z caller=lifecycler.go:1099 msg="lifecycler entering final sleep before shutdown" final_sleep=0s
-tempo-1  | level=info ts=2025-11-14T08:55:02.805869296Z caller=lifecycler.go:664 msg="instance removed from the KV store" ring=ingester
-tempo-1  | level=info ts=2025-11-14T08:55:02.795015962Z caller=module_service.go:120 msg="module stopped" module=compactor
-tempo-1  | level=info ts=2025-11-14T08:55:02.80604593Z caller=module_service.go:120 msg="module stopped" module=ingester
-tempo-1  | level=info ts=2025-11-14T08:55:02.795040693Z caller=module_service.go:120 msg="module stopped" module=metrics-generator
-tempo-1  | level=info ts=2025-11-14T08:55:02.795479046Z caller=module_service.go:120 msg="module stopped" module=block-builder
-tempo-1  | level=info ts=2025-11-14T08:55:02.80633738Z caller=module_service.go:120 msg="module stopped" module=optional-store
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802871411Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.935485336s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802915091Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.924990961s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802932855Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925699671s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802941895Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.92523894s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802948431Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.935233625s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802963142Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.9253275s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802965165Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.934986533s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802979534Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.934619505s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802981009Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.90348329s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.802993859Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.934561472s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.80299827Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.93605854s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803008409Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.936226518s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803013618Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.935458376s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803027704Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925286819s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:55:02.803019602Z caller=module_service.go:120 msg="module stopped" module=query-frontend
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803039397Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925080012s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803052113Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925275965s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.80306475Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925255496s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803077084Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.934932486s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803091611Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.925242472s msg=gRPC err="queue is stopped"
-tempo-1  | level=warn ts=2025-11-14T08:55:02.803100873Z caller=server.go:1565 method=/frontend.Frontend/Process duration=2m0.92521412s msg=gRPC err="queue is stopped"
-tempo-1  | level=info ts=2025-11-14T08:55:02.807347262Z caller=module_service.go:120 msg="module stopped" module=overrides-api
-tempo-1  | level=info ts=2025-11-14T08:55:02.812978902Z caller=module_service.go:120 msg="module stopped" module=distributor
-tempo-1  | level=info ts=2025-11-14T08:55:02.813804627Z caller=frontend.go:333 msg="received shutdown notification from querier" querier=e4ee4655ab16
-tempo-1  | level=info ts=2025-11-14T08:55:02.82029226Z caller=module_service.go:120 msg="module stopped" module=querier
-tempo-1  | level=info ts=2025-11-14T08:55:02.821033723Z caller=module_service.go:120 msg="module stopped" module=live-store-ring
-tempo-1  | level=info ts=2025-11-14T08:55:02.821082604Z caller=module_service.go:120 msg="module stopped" module=usage-report
-tempo-1  | level=info ts=2025-11-14T08:55:02.821321534Z caller=module_service.go:120 msg="module stopped" module=store
-tempo-1  | level=info ts=2025-11-14T08:55:02.821652528Z caller=module_service.go:120 msg="module stopped" module=cache-provider
-tempo-1  | level=info ts=2025-11-14T08:55:02.820832093Z caller=module_service.go:120 msg="module stopped" module=overrides
-tempo-1  | level=info ts=2025-11-14T08:55:02.821778065Z caller=module_service.go:120 msg="module stopped" module=secondary-ring
-tempo-1  | level=info ts=2025-11-14T08:55:02.839201685Z caller=module_service.go:120 msg="module stopped" module=metrics-generator-ring
-tempo-1  | level=info ts=2025-11-14T08:55:02.940950075Z caller=module_service.go:120 msg="module stopped" module=ring
-tempo-1  | level=info ts=2025-11-14T08:55:02.941051952Z caller=memberlist_client.go:892 msg="leaving memberlist cluster"
-tempo-1  | level=info ts=2025-11-14T08:55:02.94121299Z caller=module_service.go:120 msg="module stopped" module=memberlist-kv
-tempo-1  | level=info ts=2025-11-14T08:55:02.941346922Z caller=server_service.go:170 msg="server stopped"
-tempo-1  | level=info ts=2025-11-14T08:55:02.94135751Z caller=module_service.go:120 msg="module stopped" module=server
-tempo-1  | level=info ts=2025-11-14T08:55:02.941391873Z caller=module_service.go:120 msg="module stopped" module=internal-server
-tempo-1  | level=info ts=2025-11-14T08:55:02.941405043Z caller=app.go:217 msg="Tempo stopped"
 
 ==== TRAINER LOGS (last 100 lines) ====
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | Record amount must be non-negative on Histogram battleship_episode_reward.
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
-trainer-1  | ship_placement_failed
 
 ==== PROMETHEUS LOGS (last 100 lines) ====
-prometheus-1  | time=2025-11-14T08:20:23.621Z level=INFO source=main.go:1502 msg="Loading configuration file" filename=/etc/prometheus/prometheus.yml
-prometheus-1  | time=2025-11-14T08:20:23.636Z level=INFO source=main.go:1542 msg="Completed loading of configuration file" db_storage=2.291µs remote_storage=1.72µs web_handler=1.213µs query_engine=1.743µs scrape=13.564084ms scrape_sd=130.309µs notify=1.776µs notify_sd=2.765µs rules=2.752µs tracing=9.944µs filename=/etc/prometheus/prometheus.yml totalDuration=15.086337ms
-prometheus-1  | time=2025-11-14T08:20:23.636Z level=INFO source=main.go:1278 msg="Server is ready to receive web requests."
-prometheus-1  | time=2025-11-14T08:20:23.636Z level=INFO source=manager.go:190 msg="Starting rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:27:55.143Z level=WARN source=main.go:1080 msg="Received an OS signal, exiting gracefully..." signal=terminated
-prometheus-1  | time=2025-11-14T08:27:55.151Z level=INFO source=main.go:1105 msg="Stopping scrape discovery manager..."
-prometheus-1  | time=2025-11-14T08:27:55.151Z level=INFO source=main.go:1119 msg="Stopping notify discovery manager..."
-prometheus-1  | time=2025-11-14T08:27:55.156Z level=INFO source=manager.go:204 msg="Stopping rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:27:55.156Z level=INFO source=manager.go:220 msg="Rule manager stopped" component="rule manager"
-prometheus-1  | time=2025-11-14T08:27:55.156Z level=INFO source=main.go:1156 msg="Stopping scrape manager..."
-prometheus-1  | time=2025-11-14T08:27:55.156Z level=INFO source=main.go:1101 msg="Scrape discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:27:55.159Z level=INFO source=main.go:1115 msg="Notify discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:27:55.161Z level=INFO source=main.go:1148 msg="Scrape manager stopped"
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=manager.go:559 msg="Stopping notification manager..." component=notifier
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=manager.go:301 msg="Draining any remaining notifications..." component=notifier
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=manager.go:307 msg="Remaining notifications drained" component=notifier
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=manager.go:234 msg="Notification manager stopped" component=notifier
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=main.go:1426 msg="Notifier manager stopped"
-prometheus-1  | time=2025-11-14T08:27:55.175Z level=INFO source=main.go:1440 msg="See you next time!"
-prometheus-1  | time=2025-11-14T08:45:56.690Z level=INFO source=main.go:1549 msg="updated GOGC" old=100 new=75
-prometheus-1  | time=2025-11-14T08:45:56.692Z level=INFO source=main.go:680 msg="Leaving GOMAXPROCS=12: CPU quota undefined" component=automaxprocs
-prometheus-1  | time=2025-11-14T08:45:56.693Z level=INFO source=memlimit.go:198 msg="GOMEMLIMIT is updated" component=automemlimit package=github.com/KimMachineGun/automemlimit/memlimit GOMEMLIMIT=7491520512 previous=9223372036854775807
-prometheus-1  | time=2025-11-14T08:45:56.694Z level=INFO source=main.go:722 msg="No time or size retention was set so using the default time retention" duration=15d
-prometheus-1  | time=2025-11-14T08:45:56.694Z level=INFO source=main.go:773 msg="Starting Prometheus Server" mode=server version="(version=3.7.3, branch=HEAD, revision=0a41f0000705c69ab8e0f9a723fc73e39ed62b07)"
-prometheus-1  | time=2025-11-14T08:45:56.695Z level=INFO source=main.go:778 msg="operational information" build_context="(go=go1.25.3, platform=linux/amd64, user=root@08c890a84441, date=20251030-07:26:10, tags=netgo,builtinassets)" host_details="(Linux 6.11.11-linuxkit #1 SMP PREEMPT_DYNAMIC Wed Oct 22 09:38:38 UTC 2025 x86_64 57920f9b143a (none))" fd_limits="(soft=1048576, hard=1048576)" vm_limits="(soft=unlimited, hard=unlimited)"
-prometheus-1  | time=2025-11-14T08:45:56.711Z level=INFO source=web.go:660 msg="Start listening for connections" component=web address=0.0.0.0:9090
-prometheus-1  | time=2025-11-14T08:45:56.737Z level=INFO source=main.go:1293 msg="Starting TSDB ..."
-prometheus-1  | time=2025-11-14T08:45:56.745Z level=INFO source=tls_config.go:346 msg="Listening on" component=web address=[::]:9090
-prometheus-1  | time=2025-11-14T08:45:56.746Z level=INFO source=tls_config.go:349 msg="TLS is disabled." component=web http2=false address=[::]:9090
-prometheus-1  | time=2025-11-14T08:45:56.757Z level=INFO source=head.go:669 msg="Replaying on-disk memory mappable chunks if any" component=tsdb
-prometheus-1  | time=2025-11-14T08:45:56.759Z level=INFO source=head.go:755 msg="On-disk memory mappable chunks replay completed" component=tsdb duration=25.421µs
-prometheus-1  | time=2025-11-14T08:45:56.759Z level=INFO source=head.go:763 msg="Replaying WAL, this may take a while" component=tsdb
-prometheus-1  | time=2025-11-14T08:45:56.766Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=0 maxSegment=4 duration=5.590647ms
-prometheus-1  | time=2025-11-14T08:45:56.769Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=1 maxSegment=4 duration=3.487018ms
-prometheus-1  | time=2025-11-14T08:45:56.776Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=2 maxSegment=4 duration=6.169714ms
-prometheus-1  | time=2025-11-14T08:45:56.794Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=3 maxSegment=4 duration=18.661347ms
-prometheus-1  | time=2025-11-14T08:45:56.797Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=4 maxSegment=4 duration=2.737573ms
-prometheus-1  | time=2025-11-14T08:45:56.797Z level=INFO source=head.go:873 msg="WAL replay completed" component=tsdb checkpoint_replay_duration=558.846µs wal_replay_duration=37.192918ms wbl_replay_duration=175ns chunk_snapshot_load_duration=0s mmap_chunk_replay_duration=25.421µs total_replay_duration=37.899566ms
-prometheus-1  | time=2025-11-14T08:45:56.807Z level=INFO source=main.go:1314 msg="filesystem information" fs_type=EXT4_SUPER_MAGIC
-prometheus-1  | time=2025-11-14T08:45:56.807Z level=INFO source=main.go:1317 msg="TSDB started"
-prometheus-1  | time=2025-11-14T08:45:56.807Z level=INFO source=main.go:1502 msg="Loading configuration file" filename=/etc/prometheus/prometheus.yml
-prometheus-1  | time=2025-11-14T08:45:56.814Z level=INFO source=main.go:1542 msg="Completed loading of configuration file" db_storage=2.324µs remote_storage=14.712µs web_handler=626ns query_engine=1.533µs scrape=3.234712ms scrape_sd=106.288µs notify=9µs notify_sd=1.239µs rules=8.084µs tracing=43.945µs filename=/etc/prometheus/prometheus.yml totalDuration=6.356644ms
-prometheus-1  | time=2025-11-14T08:45:56.814Z level=INFO source=main.go:1278 msg="Server is ready to receive web requests."
-prometheus-1  | time=2025-11-14T08:45:56.814Z level=INFO source=manager.go:190 msg="Starting rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:52:35.176Z level=WARN source=main.go:1080 msg="Received an OS signal, exiting gracefully..." signal=terminated
-prometheus-1  | time=2025-11-14T08:52:35.176Z level=INFO source=main.go:1105 msg="Stopping scrape discovery manager..."
-prometheus-1  | time=2025-11-14T08:52:35.177Z level=INFO source=main.go:1119 msg="Stopping notify discovery manager..."
-prometheus-1  | time=2025-11-14T08:52:35.177Z level=INFO source=main.go:1101 msg="Scrape discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:52:35.180Z level=INFO source=main.go:1115 msg="Notify discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:52:35.181Z level=INFO source=manager.go:204 msg="Stopping rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:52:35.182Z level=INFO source=manager.go:220 msg="Rule manager stopped" component="rule manager"
-prometheus-1  | time=2025-11-14T08:52:35.182Z level=INFO source=main.go:1156 msg="Stopping scrape manager..."
-prometheus-1  | time=2025-11-14T08:52:35.182Z level=INFO source=main.go:1148 msg="Scrape manager stopped"
-prometheus-1  | time=2025-11-14T08:52:35.213Z level=INFO source=manager.go:559 msg="Stopping notification manager..." component=notifier
-prometheus-1  | time=2025-11-14T08:52:35.214Z level=INFO source=manager.go:301 msg="Draining any remaining notifications..." component=notifier
-prometheus-1  | time=2025-11-14T08:52:35.214Z level=INFO source=manager.go:307 msg="Remaining notifications drained" component=notifier
-prometheus-1  | time=2025-11-14T08:52:35.214Z level=INFO source=manager.go:234 msg="Notification manager stopped" component=notifier
-prometheus-1  | time=2025-11-14T08:52:35.214Z level=INFO source=main.go:1426 msg="Notifier manager stopped"
-prometheus-1  | time=2025-11-14T08:52:35.215Z level=INFO source=main.go:1440 msg="See you next time!"
-prometheus-1  | time=2025-11-14T08:53:02.205Z level=INFO source=main.go:1549 msg="updated GOGC" old=100 new=75
-prometheus-1  | time=2025-11-14T08:53:02.209Z level=INFO source=main.go:680 msg="Leaving GOMAXPROCS=12: CPU quota undefined" component=automaxprocs
-prometheus-1  | time=2025-11-14T08:53:02.210Z level=INFO source=memlimit.go:198 msg="GOMEMLIMIT is updated" component=automemlimit package=github.com/KimMachineGun/automemlimit/memlimit GOMEMLIMIT=7491520512 previous=9223372036854775807
-prometheus-1  | time=2025-11-14T08:53:02.210Z level=INFO source=main.go:722 msg="No time or size retention was set so using the default time retention" duration=15d
-prometheus-1  | time=2025-11-14T08:53:02.211Z level=INFO source=main.go:773 msg="Starting Prometheus Server" mode=server version="(version=3.7.3, branch=HEAD, revision=0a41f0000705c69ab8e0f9a723fc73e39ed62b07)"
-prometheus-1  | time=2025-11-14T08:53:02.211Z level=INFO source=main.go:778 msg="operational information" build_context="(go=go1.25.3, platform=linux/amd64, user=root@08c890a84441, date=20251030-07:26:10, tags=netgo,builtinassets)" host_details="(Linux 6.11.11-linuxkit #1 SMP PREEMPT_DYNAMIC Wed Oct 22 09:38:38 UTC 2025 x86_64 57920f9b143a (none))" fd_limits="(soft=1048576, hard=1048576)" vm_limits="(soft=unlimited, hard=unlimited)"
-prometheus-1  | time=2025-11-14T08:53:02.215Z level=INFO source=web.go:660 msg="Start listening for connections" component=web address=0.0.0.0:9090
-prometheus-1  | time=2025-11-14T08:53:02.227Z level=INFO source=main.go:1293 msg="Starting TSDB ..."
-prometheus-1  | time=2025-11-14T08:53:02.245Z level=INFO source=tls_config.go:346 msg="Listening on" component=web address=[::]:9090
-prometheus-1  | time=2025-11-14T08:53:02.246Z level=INFO source=tls_config.go:349 msg="TLS is disabled." component=web http2=false address=[::]:9090
-prometheus-1  | time=2025-11-14T08:53:02.248Z level=INFO source=head.go:669 msg="Replaying on-disk memory mappable chunks if any" component=tsdb
-prometheus-1  | time=2025-11-14T08:53:02.248Z level=INFO source=head.go:755 msg="On-disk memory mappable chunks replay completed" component=tsdb duration=9.137µs
-prometheus-1  | time=2025-11-14T08:53:02.248Z level=INFO source=head.go:763 msg="Replaying WAL, this may take a while" component=tsdb
-prometheus-1  | time=2025-11-14T08:53:02.249Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=0 maxSegment=5 duration=508.051µs
-prometheus-1  | time=2025-11-14T08:53:02.251Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=1 maxSegment=5 duration=1.652498ms
-prometheus-1  | time=2025-11-14T08:53:02.252Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=2 maxSegment=5 duration=828.994µs
-prometheus-1  | time=2025-11-14T08:53:02.258Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=3 maxSegment=5 duration=6.333883ms
-prometheus-1  | time=2025-11-14T08:53:02.263Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=4 maxSegment=5 duration=3.013911ms
-prometheus-1  | time=2025-11-14T08:53:02.264Z level=INFO source=head.go:836 msg="WAL segment loaded" component=tsdb segment=5 maxSegment=5 duration=1.46275ms
-prometheus-1  | time=2025-11-14T08:53:02.264Z level=INFO source=head.go:873 msg="WAL replay completed" component=tsdb checkpoint_replay_duration=44.393µs wal_replay_duration=15.939082ms wbl_replay_duration=200ns chunk_snapshot_load_duration=0s mmap_chunk_replay_duration=9.137µs total_replay_duration=16.018612ms
-prometheus-1  | time=2025-11-14T08:53:02.268Z level=INFO source=main.go:1314 msg="filesystem information" fs_type=EXT4_SUPER_MAGIC
-prometheus-1  | time=2025-11-14T08:53:02.268Z level=INFO source=main.go:1317 msg="TSDB started"
-prometheus-1  | time=2025-11-14T08:53:02.268Z level=INFO source=main.go:1502 msg="Loading configuration file" filename=/etc/prometheus/prometheus.yml
-prometheus-1  | time=2025-11-14T08:53:02.271Z level=INFO source=main.go:1542 msg="Completed loading of configuration file" db_storage=1.853µs remote_storage=2.478µs web_handler=640ns query_engine=1.583µs scrape=798.696µs scrape_sd=177.497µs notify=2.116µs notify_sd=1.462µs rules=2.128µs tracing=9.474µs filename=/etc/prometheus/prometheus.yml totalDuration=2.6928ms
-prometheus-1  | time=2025-11-14T08:53:02.271Z level=INFO source=main.go:1278 msg="Server is ready to receive web requests."
-prometheus-1  | time=2025-11-14T08:53:02.271Z level=INFO source=manager.go:190 msg="Starting rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:55:02.775Z level=WARN source=main.go:1080 msg="Received an OS signal, exiting gracefully..." signal=terminated
-prometheus-1  | time=2025-11-14T08:55:02.775Z level=INFO source=main.go:1105 msg="Stopping scrape discovery manager..."
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=main.go:1119 msg="Stopping notify discovery manager..."
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=manager.go:204 msg="Stopping rule manager..." component="rule manager"
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=manager.go:220 msg="Rule manager stopped" component="rule manager"
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=main.go:1156 msg="Stopping scrape manager..."
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=main.go:1101 msg="Scrape discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:55:02.789Z level=INFO source=main.go:1115 msg="Notify discovery manager stopped"
-prometheus-1  | time=2025-11-14T08:55:02.792Z level=INFO source=main.go:1148 msg="Scrape manager stopped"
-prometheus-1  | time=2025-11-14T08:55:02.795Z level=INFO source=manager.go:559 msg="Stopping notification manager..." component=notifier
-prometheus-1  | time=2025-11-14T08:55:02.795Z level=INFO source=manager.go:301 msg="Draining any remaining notifications..." component=notifier
-prometheus-1  | time=2025-11-14T08:55:02.795Z level=INFO source=manager.go:307 msg="Remaining notifications drained" component=notifier
-prometheus-1  | time=2025-11-14T08:55:02.801Z level=INFO source=manager.go:234 msg="Notification manager stopped" component=notifier
-prometheus-1  | time=2025-11-14T08:55:02.806Z level=INFO source=main.go:1426 msg="Notifier manager stopped"
-prometheus-1  | time=2025-11-14T08:55:02.806Z level=INFO source=main.go:1440 msg="See you next time!"
 
 ==== GRAFANA LOGS (last 100 lines) ====
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:46:00.496193804Z level=info msg="Skipping API plugins.grafana.app/v0alpha1 because it has no resources."
-grafana-1  | t=2025-11-14T08:46:00.496287641Z level=info caller=logger.go:214 time=2025-11-14T08:46:00.496281299Z msg="Installed APIs for app" app=plugins
-grafana-1  | t=2025-11-14T08:46:00.618651387Z level=info caller=logger.go:214 time=2025-11-14T08:46:00.618642408Z msg="App initialized" app=plugins
-grafana-1  | t=2025-11-14T08:46:00.618813914Z level=info caller=logger.go:214 time=2025-11-14T08:46:00.618798908Z msg="App initialized" app=playlist
-grafana-1  | logger=app-registry t=2025-11-14T08:46:00.619173361Z level=info msg="app registry initialized"
-grafana-1  | logger=infra.usagestats t=2025-11-14T08:47:43.983578519Z level=info msg="Usage stats are ready to report"
-grafana-1  | logger=server t=2025-11-14T08:52:34.804885448Z level=info msg="Shutdown started" reason="System signal: terminated"
-grafana-1  | logger=ngalert.scheduler t=2025-11-14T08:52:34.806026073Z level=info msg=stopped component=ticker last_tick=2025-11-14T08:52:30Z
-grafana-1  | logger=tracing t=2025-11-14T08:52:34.808359535Z level=info msg="Closing tracing"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:52:34.809998723Z level=info msg="StorageObjectCountTracker pruner is exiting"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.05129857Z level=info msg="Starting Grafana" version=12.2.1 commit=563109b696e9c1cbaf345f2ab7a11f7f78422982 branch=release-12.2.1 compiled=2025-11-14T08:53:03Z
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051773002Z level=info msg="Config loaded from" file=/usr/share/grafana/conf/defaults.ini
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051811734Z level=info msg="Config loaded from" file=/etc/grafana/grafana.ini
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051827144Z level=info msg="Config overridden from command line" arg="default.paths.data=/var/lib/grafana"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051830312Z level=info msg="Config overridden from command line" arg="default.paths.logs=/var/log/grafana"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051832739Z level=info msg="Config overridden from command line" arg="default.paths.plugins=/var/lib/grafana/plugins"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051834929Z level=info msg="Config overridden from command line" arg="default.paths.provisioning=/etc/grafana/provisioning"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051837424Z level=info msg="Config overridden from command line" arg="default.log.mode=console"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.0518415Z level=info msg="Config overridden from Environment variable" var="GF_PATHS_DATA=/var/lib/grafana"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051843957Z level=info msg="Config overridden from Environment variable" var="GF_PATHS_LOGS=/var/log/grafana"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051846233Z level=info msg="Config overridden from Environment variable" var="GF_PATHS_PLUGINS=/var/lib/grafana/plugins"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051848597Z level=info msg="Config overridden from Environment variable" var="GF_PATHS_PROVISIONING=/etc/grafana/provisioning"
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051851022Z level=info msg=Target target=[all]
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051858807Z level=info msg="Path Home" path=/usr/share/grafana
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051861179Z level=info msg="Path Data" path=/var/lib/grafana
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051864017Z level=info msg="Path Logs" path=/var/log/grafana
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051866089Z level=info msg="Path Plugins" path=/var/lib/grafana/plugins
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051868313Z level=info msg="Path Provisioning" path=/etc/grafana/provisioning
-grafana-1  | logger=settings t=2025-11-14T08:53:03.051870727Z level=info msg="App mode production"
-grafana-1  | logger=featuremgmt t=2025-11-14T08:53:03.053446235Z level=info msg=FeatureToggles panelMonitoring=true dashgpt=true alertingImportYAMLUI=true onPremToCloudMigrations=true alertingBulkActionsInUI=true preinstallAutoUpdate=true alertingRulePermanentlyDelete=true useSessionStorageForRedirection=true cloudWatchRoundUpEndTime=true grafanaconThemes=true unifiedStorageHistoryPruner=true azureMonitorPrometheusExemplars=true newFiltersUI=true newPDFRendering=true skipTokenRotationIfRecent=true cloudWatchNewLabelParsing=true recordedQueriesMulti=true influxdbBackendMigration=true adhocFiltersInTooltips=true alertingNotificationsStepMode=true groupToNestedTableTransformation=true lokiLabelNamesQueryApi=true awsAsyncQueryCaching=true formatString=true dashboardDsAdHocFiltering=true correlations=true improvedExternalSessionHandlingSAML=true alertingMigrationUI=true ssoSettingsLDAP=true lokiQuerySplitting=true promQLScope=true prometheusAzureOverrideAudience=true dataplaneFrontendFallback=true dashboardScene=true transformationsRedesign=true logRowsPopoverMenu=true alertingUIOptimizeReducer=true annotationPermissionUpdate=true alertingRuleRecoverDeleted=true newDashboardSharingComponent=true improvedExternalSessionHandling=true azureMonitorEnableUserAuth=true dashboardSceneSolo=true cloudWatchCrossAccountQuerying=true pinNavItems=true tlsMemcached=true addFieldFromCalculationStatFunctions=true alertingQueryAndExpressionsStepMode=true dashboardSceneForViewers=true logsContextDatasourceUi=true logsInfiniteScrolling=true logsExploreTableVisualisation=true alertingRuleVersionHistoryRestore=true logsPanelControls=true alertingSaveStateCompressed=true awsDatasourcesTempCredentials=true kubernetesDashboards=true publicDashboardsScene=true alertRuleRestore=true unifiedRequestLog=true grafanaAssistantInProfilesDrilldown=true
-grafana-1  | logger=sqlstore t=2025-11-14T08:53:03.053676424Z level=info msg="Connecting to DB" dbtype=sqlite3
-grafana-1  | logger=migrator t=2025-11-14T08:53:03.063125087Z level=info msg="Locking database"
-grafana-1  | logger=migrator t=2025-11-14T08:53:03.063177609Z level=info msg="Starting DB migrations"
-grafana-1  | logger=migrator t=2025-11-14T08:53:03.088151016Z level=info msg="migrations completed" performed=0 skipped=674 duration=1.093925ms
-grafana-1  | logger=migrator t=2025-11-14T08:53:03.088832929Z level=info msg="Unlocking database"
-grafana-1  | logger=secrets t=2025-11-14T08:53:03.089809777Z level=info msg="Envelope encryption state" enabled=true currentprovider=secretKey.v1
-grafana-1  | logger=plugin.angulardetectorsprovider.dynamic t=2025-11-14T08:53:03.180044322Z level=info msg="Restored cache from database" duration=419.911µs
-grafana-1  | logger=resource-db t=2025-11-14T08:53:03.181804913Z level=info msg="Using database section" db_type=sqlite3
-grafana-1  | logger=resource-db t=2025-11-14T08:53:03.18190513Z level=info msg="Initializing Resource DB" db_type=sqlite3 open_conn=0 in_use_conn=0 idle_conn=0 max_open_conn=0
-grafana-1  | logger=resource-migrator t=2025-11-14T08:53:03.190581286Z level=info msg="Locking database"
-grafana-1  | logger=resource-migrator t=2025-11-14T08:53:03.190697414Z level=info msg="Starting DB migrations"
-grafana-1  | logger=resource-migrator t=2025-11-14T08:53:03.201205602Z level=info msg="migrations completed" performed=0 skipped=26 duration=44.8µs
-grafana-1  | logger=resource-migrator t=2025-11-14T08:53:03.20198453Z level=info msg="Unlocking database"
-grafana-1  | t=2025-11-14T08:53:03.202316383Z level=info caller=logger.go:214 time=2025-11-14T08:53:03.202298424Z msg="Using channel notifier" logger=sql-resource-server
-grafana-1  | logger=plugin.store t=2025-11-14T08:53:03.204609368Z level=info msg="Loading plugins..."
-grafana-1  | logger=plugins.registration t=2025-11-14T08:53:03.299344983Z level=info msg="Plugin registered" pluginId=grafana-exploretraces-app
-grafana-1  | logger=plugins.registration t=2025-11-14T08:53:03.379840755Z level=info msg="Plugin registered" pluginId=grafana-lokiexplore-app
-grafana-1  | logger=plugins.registration t=2025-11-14T08:53:03.425496714Z level=info msg="Plugin registered" pluginId=grafana-metricsdrilldown-app
-grafana-1  | logger=plugins.registration t=2025-11-14T08:53:03.464240598Z level=info msg="Plugin registered" pluginId=grafana-pyroscope-app
-grafana-1  | logger=plugin.store t=2025-11-14T08:53:03.464294957Z level=info msg="Plugins loaded" count=56 duration=259.686569ms
-grafana-1  | logger=provisioning.dashboard t=2025-11-14T08:53:03.47057703Z level=error msg="can't read dashboard provisioning files from directory" path=/etc/grafana/provisioning/dashboards error="open /etc/grafana/provisioning/dashboards: no such file or directory"
-grafana-1  | logger=query_data t=2025-11-14T08:53:03.471317211Z level=info msg="Query Service initialization"
-grafana-1  | logger=live.push_http t=2025-11-14T08:53:03.476467683Z level=info msg="Live Push Gateway initialization"
-grafana-1  | logger=ngalert.notifier component=alertmanager orgID=1 t=2025-11-14T08:53:03.480034857Z level=info msg="Applying new configuration to Alertmanager" configHash=d2c56faca6af2a5772ff4253222f7386
-grafana-1  | logger=ngalert.writer t=2025-11-14T08:53:03.48987914Z level=info msg="Setting up remote write using data sources" timeout=30s default_datasource_uid=
-grafana-1  | logger=ngalert t=2025-11-14T08:53:03.489979441Z level=info msg="Using protobuf-based alert instance store"
-grafana-1  | logger=ngalert.state.manager.persist t=2025-11-14T08:53:03.489992217Z level=info msg="Using rule state persister"
-grafana-1  | logger=secret-migrator t=2025-11-14T08:53:03.494076277Z level=info msg="Locking database"
-grafana-1  | logger=secret-migrator t=2025-11-14T08:53:03.494132003Z level=info msg="Starting DB migrations"
-grafana-1  | logger=secret-migrator t=2025-11-14T08:53:03.495296959Z level=info msg="migrations completed" performed=0 skipped=24 duration=41.172µs
-grafana-1  | logger=secret-migrator t=2025-11-14T08:53:03.496104891Z level=info msg="Unlocking database"
-grafana-1  | logger=infra.usagestats.collector t=2025-11-14T08:53:03.496657527Z level=info msg="registering usage stat providers" usageStatsProvidersLen=2
-grafana-1  | logger=ngalert.multiorg.alertmanager t=2025-11-14T08:53:03.498461034Z level=info msg="Starting MultiOrg Alertmanager"
-grafana-1  | logger=grafanaStorageLogger t=2025-11-14T08:53:03.497725235Z level=info msg="Storage starting"
-grafana-1  | logger=ngalert.state.manager t=2025-11-14T08:53:03.498337553Z level=info msg="Warming state cache for startup"
-grafana-1  | logger=http.server t=2025-11-14T08:53:03.516923275Z level=info msg="HTTP Server Listen" address=[::]:3000 protocol=http subUrl= socket=
-grafana-1  | logger=ngalert.state.manager t=2025-11-14T08:53:03.57995078Z level=info msg="State cache has been initialized" states=0 duration=81.609473ms
-grafana-1  | logger=ngalert.scheduler t=2025-11-14T08:53:03.580068906Z level=info msg="Starting scheduler" tickInterval=10s maxAttempts=3
-grafana-1  | logger=ngalert.scheduler t=2025-11-14T08:53:03.580126116Z level=info msg=starting component=ticker first_tick=2025-11-14T08:53:10Z
-grafana-1  | logger=sqlstore.transactions t=2025-11-14T08:53:03.650812729Z level=info msg="Database locked, sleeping then retrying" error="database is locked" retry=0
-grafana-1  | logger=provisioning.plugins t=2025-11-14T08:53:03.696071946Z level=error msg="Failed to read plugin provisioning files from directory" path=/etc/grafana/provisioning/plugins error="open /etc/grafana/provisioning/plugins: no such file or directory"
-grafana-1  | logger=provisioning.alerting t=2025-11-14T08:53:03.696360438Z level=error msg="can't read alerting provisioning files from directory" path=/etc/grafana/provisioning/alerting error="open /etc/grafana/provisioning/alerting: no such file or directory"
-grafana-1  | logger=provisioning.alerting t=2025-11-14T08:53:03.696402724Z level=info msg="starting to provision alerting"
-grafana-1  | logger=provisioning.alerting t=2025-11-14T08:53:03.69641309Z level=info msg="finished to provision alerting"
-grafana-1  | logger=provisioning.dashboard t=2025-11-14T08:53:03.696679046Z level=error msg="can't read dashboard provisioning files from directory" path=/etc/grafana/provisioning/dashboards error="open /etc/grafana/provisioning/dashboards: no such file or directory"
-grafana-1  | logger=provisioning.dashboard t=2025-11-14T08:53:03.697150123Z level=info msg="starting to provision dashboards"
-grafana-1  | logger=provisioning.dashboard t=2025-11-14T08:53:03.697213079Z level=info msg="finished to provision dashboards"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.741987194Z level=info msg="Adding GroupVersion notifications.alerting.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.751426063Z level=info msg="Adding GroupVersion dashboard.grafana.app v1beta1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.752914494Z level=info msg="Adding GroupVersion dashboard.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.755057538Z level=info msg="Adding GroupVersion dashboard.grafana.app v2beta1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.755850412Z level=info msg="Adding GroupVersion dashboard.grafana.app v2alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.757610597Z level=info msg="Adding GroupVersion folder.grafana.app v1beta1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.760287891Z level=info msg="Adding GroupVersion iam.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.761132371Z level=info msg="Adding GroupVersion userstorage.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.761434875Z level=info msg="Adding GroupVersion features.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.763248593Z level=info msg="Adding GroupVersion playlist.grafana.app v0alpha1 to ResourceManager"
-grafana-1  | t=2025-11-14T08:53:03.763357306Z level=info caller=logger.go:214 time=2025-11-14T08:53:03.763348329Z msg="Installed APIs for app" app=playlist
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:53:03.763664036Z level=info msg="Skipping API plugins.grafana.app/v0alpha1 because it has no resources."
-grafana-1  | t=2025-11-14T08:53:03.763770475Z level=info caller=logger.go:214 time=2025-11-14T08:53:03.76376507Z msg="Installed APIs for app" app=plugins
-grafana-1  | logger=app-registry t=2025-11-14T08:53:03.851656175Z level=info msg="app registry initialized"
-grafana-1  | t=2025-11-14T08:53:03.85181894Z level=info caller=logger.go:214 time=2025-11-14T08:53:03.851812947Z msg="App initialized" app=playlist
-grafana-1  | t=2025-11-14T08:53:03.851832557Z level=info caller=logger.go:214 time=2025-11-14T08:53:03.85182796Z msg="App initialized" app=plugins
-grafana-1  | logger=plugins.update.checker t=2025-11-14T08:53:03.921979222Z level=info msg="Update check succeeded" duration=423.989136ms
-grafana-1  | logger=grafana.update.checker t=2025-11-14T08:53:03.922146528Z level=info msg="Update check succeeded" duration=424.23734ms
-grafana-1  | logger=infra.usagestats t=2025-11-14T08:53:37.505071489Z level=info msg="Usage stats are ready to report"
-grafana-1  | logger=server t=2025-11-14T08:55:02.438499946Z level=info msg="Shutdown started" reason="System signal: terminated"
-grafana-1  | logger=ngalert.scheduler t=2025-11-14T08:55:02.438700602Z level=info msg=stopped component=ticker last_tick=2025-11-14T08:55:00Z
-grafana-1  | logger=tracing t=2025-11-14T08:55:02.439653581Z level=info msg="Closing tracing"
-grafana-1  | logger=grafana-apiserver t=2025-11-14T08:55:02.440749184Z level=info msg="StorageObjectCountTracker pruner is exiting"
 
 ==== LOKI LOGS (last 100 lines) ====
-loki-1  | level=info ts=2025-11-14T08:53:02.087864989Z caller=ringmanager.go:186 msg="waiting until scheduler is JOINING in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.087879361Z caller=ringmanager.go:190 msg="scheduler is JOINING in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.087928829Z caller=ringmanager.go:199 msg="waiting until scheduler is ACTIVE in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.087395448Z caller=module_service.go:82 msg=starting module=ingester-querier
-loki-1  | level=info ts=2025-11-14T08:53:02.08874155Z caller=module_service.go:82 msg=starting module=analytics
-loki-1  | level=info ts=2025-11-14T08:53:02.08885906Z caller=module_service.go:82 msg=starting module=rule-evaluator
-loki-1  | level=info ts=2025-11-14T08:53:02.089011239Z caller=module_service.go:82 msg=starting module=ingester
-loki-1  | level=info ts=2025-11-14T08:53:02.091706556Z caller=module_service.go:82 msg=starting module=ruler
-loki-1  | level=info ts=2025-11-14T08:53:02.091878512Z caller=module_service.go:82 msg=starting module=distributor
-loki-1  | level=info ts=2025-11-14T08:53:02.092169544Z caller=module_service.go:82 msg=starting module=compactor
-loki-1  | level=info ts=2025-11-14T08:53:02.092555819Z caller=ring.go:361 msg="ring doesn't exist in KV store yet"
-loki-1  | level=info ts=2025-11-14T08:53:02.092889782Z caller=basic_lifecycler.go:301 msg="instance not found in the ring" instance=6cbd067d63dc ring=compactor
-loki-1  | level=info ts=2025-11-14T08:53:02.092901912Z caller=basic_lifecycler_delegates.go:63 msg="not loading tokens from file, tokens file path is empty"
-loki-1  | level=info ts=2025-11-14T08:53:02.0931401Z caller=compactor.go:443 msg="waiting until compactor is JOINING in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.093149498Z caller=compactor.go:447 msg="compactor is JOINING in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.093193277Z caller=compactor.go:457 msg="waiting until compactor is ACTIVE in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.094076483Z caller=ruler.go:533 msg="ruler up and running"
-loki-1  | level=error ts=2025-11-14T08:53:02.095085015Z caller=ratestore.go:109 msg="error getting ingester clients" err="empty ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.096127289Z caller=ingester.go:564 component=ingester msg="recovering from checkpoint"
-loki-1  | level=info ts=2025-11-14T08:53:02.099167446Z caller=ring.go:361 component=distributor msg="ring doesn't exist in KV store yet"
-loki-1  | level=info ts=2025-11-14T08:53:02.099186805Z caller=ingester.go:580 component=ingester msg="recovered WAL checkpoint recovery finished" elapsed=10.151544ms errors=false
-loki-1  | level=info ts=2025-11-14T08:53:02.098462581Z caller=basic_lifecycler.go:301 component=distributor msg="instance not found in the ring" instance=6cbd067d63dc ring=distributor
-loki-1  | level=info ts=2025-11-14T08:53:02.099211703Z caller=ingester.go:586 component=ingester msg="recovering from WAL"
-loki-1  | level=info ts=2025-11-14T08:53:02.100340638Z caller=ingester.go:602 component=ingester msg="WAL segment recovery finished" elapsed=11.307157ms errors=false
-loki-1  | level=info ts=2025-11-14T08:53:02.100363145Z caller=ingester.go:550 component=ingester msg="closing recoverer"
-loki-1  | level=info ts=2025-11-14T08:53:02.100379619Z caller=ingester.go:558 component=ingester msg="WAL recovery finished" time=11.345556ms
-loki-1  | level=info ts=2025-11-14T08:53:02.100682482Z caller=wal.go:157 msg=started component=wal
-loki-1  | level=info ts=2025-11-14T08:53:02.100829798Z caller=lifecycler.go:677 component=ingester msg="not loading tokens from file, tokens file path is empty"
-loki-1  | level=info ts=2025-11-14T08:53:02.100924637Z caller=ingester.go:771 component=ingester msg="sleeping for initial delay before starting periodic flushing" delay=23.993209452s
-loki-1  | level=info ts=2025-11-14T08:53:02.100939134Z caller=lifecycler.go:704 component=ingester msg="instance not found in ring, adding with no tokens" ring=ingester
-loki-1  | level=info ts=2025-11-14T08:53:02.101004797Z caller=lifecycler.go:546 component=ingester msg="auto-joining cluster after timeout" ring=ingester
-loki-1  | level=info ts=2025-11-14T08:53:02.238797532Z caller=ringmanager.go:203 msg="scheduler is ACTIVE in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.23892345Z caller=module_service.go:82 msg=starting module=query-scheduler
-loki-1  | level=info ts=2025-11-14T08:53:02.239078517Z caller=module_service.go:82 msg=starting module=query-frontend
-loki-1  | level=info ts=2025-11-14T08:53:02.239318006Z caller=module_service.go:82 msg=starting module=querier
-loki-1  | level=info ts=2025-11-14T08:53:02.240844379Z caller=compactor.go:461 msg="compactor is ACTIVE in the ring"
-loki-1  | level=info ts=2025-11-14T08:53:02.240987554Z caller=loki.go:581 msg="Loki started" startup_time=465.598323ms
-loki-1  | level=info ts=2025-11-14T08:53:05.240862341Z caller=worker.go:232 component=querier msg="adding connection" addr=127.0.0.1:9095
-loki-1  | level=info ts=2025-11-14T08:53:05.240874234Z caller=scheduler.go:653 msg="this scheduler is in the ReplicationSet, will now accept requests."
-loki-1  | level=info ts=2025-11-14T08:53:07.242359982Z caller=compactor.go:522 msg="this instance has been chosen to run the compactor, starting compactor"
-loki-1  | level=info ts=2025-11-14T08:53:07.24248504Z caller=compactor.go:551 msg="waiting 10m0s for ring to stay stable and previous compactions to finish before starting compactor"
-loki-1  | level=info ts=2025-11-14T08:53:12.24216044Z caller=frontend_scheduler_worker.go:106 msg="adding connection to scheduler" addr=127.0.0.1:9095
-loki-1  | level=info ts=2025-11-14T08:53:32.102149406Z caller=recalculate_owned_streams.go:49 msg="starting recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:53:32.102209781Z caller=recalculate_owned_streams.go:63 msg="detected ring changes, re-evaluating streams ownership"
-loki-1  | level=info ts=2025-11-14T08:53:32.102219388Z caller=recalculate_owned_streams.go:52 msg="completed recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:54:02.032368282Z caller=table_manager.go:136 index-store=tsdb-2020-10-24 msg="uploading tables"
-loki-1  | level=info ts=2025-11-14T08:54:02.104004797Z caller=recalculate_owned_streams.go:49 msg="starting recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:54:02.104080363Z caller=recalculate_owned_streams.go:52 msg="completed recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:54:32.103596441Z caller=recalculate_owned_streams.go:49 msg="starting recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:54:32.103644112Z caller=recalculate_owned_streams.go:52 msg="completed recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:55:02.031007884Z caller=table_manager.go:136 index-store=tsdb-2020-10-24 msg="uploading tables"
-loki-1  | level=info ts=2025-11-14T08:55:02.100701035Z caller=recalculate_owned_streams.go:49 msg="starting recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:55:02.100741197Z caller=recalculate_owned_streams.go:52 msg="completed recalculate owned streams job"
-loki-1  | level=info ts=2025-11-14T08:55:02.779288386Z caller=signals.go:62 msg="=== received SIGINT/SIGTERM ===\n*** exiting"
-loki-1  | level=info ts=2025-11-14T08:55:02.779853584Z caller=basic_lifecycler.go:242 component=distributor msg="ring lifecycler is shutting down" ring=distributor
-loki-1  | level=info ts=2025-11-14T08:55:02.780104924Z caller=basic_lifecycler.go:407 component=distributor msg="unregistering instance from ring" ring=distributor
-loki-1  | level=info ts=2025-11-14T08:55:02.780149802Z caller=basic_lifecycler.go:282 component=distributor msg="instance removed from the ring" ring=distributor
-loki-1  | level=error ts=2025-11-14T08:55:02.780221507Z caller=compactor.go:563 msg="failed to run compaction" err="context canceled"
-loki-1  | level=info ts=2025-11-14T08:55:02.780242854Z caller=compactor.go:621 msg="compactor started"
-loki-1  | level=info ts=2025-11-14T08:55:02.780307731Z caller=manager.go:267 msg="stopping user managers"
-loki-1  | level=info ts=2025-11-14T08:55:02.780314983Z caller=manager.go:281 msg="all user managers stopped"
-loki-1  | level=info ts=2025-11-14T08:55:02.780348168Z caller=mapper.go:47 msg="cleaning up mapped rules directory" path=/loki/rules-temp
-loki-1  | level=info ts=2025-11-14T08:55:02.781167458Z caller=module_service.go:120 msg="module stopped" module=ruler
-loki-1  | level=info ts=2025-11-14T08:55:02.781191128Z caller=module_service.go:120 msg="module stopped" module=rule-evaluator
-loki-1  | level=info ts=2025-11-14T08:55:02.781216245Z caller=compactor.go:504 msg="compactor exiting"
-loki-1  | level=info ts=2025-11-14T08:55:02.781240753Z caller=basic_lifecycler.go:242 msg="ring lifecycler is shutting down" ring=compactor
-loki-1  | level=info ts=2025-11-14T08:55:02.781335442Z caller=basic_lifecycler.go:407 msg="unregistering instance from ring" ring=compactor
-loki-1  | level=info ts=2025-11-14T08:55:02.78136518Z caller=basic_lifecycler.go:282 msg="instance removed from the ring" ring=compactor
-loki-1  | level=info ts=2025-11-14T08:55:02.78162904Z caller=module_service.go:120 msg="module stopped" module=distributor
-loki-1  | level=info ts=2025-11-14T08:55:02.781713774Z caller=module_service.go:120 msg="module stopped" module=compactor
-loki-1  | level=error ts=2025-11-14T08:55:02.781769976Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095
-loki-1  | level=error ts=2025-11-14T08:55:02.782143279Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095
-loki-1  | level=error ts=2025-11-14T08:55:02.782172958Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095
-loki-1  | level=error ts=2025-11-14T08:55:02.782220268Z caller=scheduler_processor.go:111 component=querier msg="error processing requests from scheduler" err="rpc error: code = Canceled desc = context canceled" addr=127.0.0.1:9095
-loki-1  | level=info ts=2025-11-14T08:55:02.783109362Z caller=wal.go:145 msg=stopped component=wal
-loki-1  | level=info ts=2025-11-14T08:55:02.783154898Z caller=lifecycler.go:596 component=ingester msg="lifecycler loop() exited gracefully" ring=ingester
-loki-1  | level=info ts=2025-11-14T08:55:02.783175929Z caller=lifecycler.go:979 component=ingester msg="changing instance state from" old_state=ACTIVE new_state=LEAVING ring=ingester
-loki-1  | level=info ts=2025-11-14T08:55:02.783458326Z caller=lifecycler.go:1058 component=ingester msg="transfers are disabled"
-loki-1  | level=info ts=2025-11-14T08:55:02.783483177Z caller=lifecycler.go:1075 component=ingester msg="lifecycler entering final sleep before shutdown" final_sleep=0s
-loki-1  | level=info ts=2025-11-14T08:55:02.783548606Z caller=lifecycler.go:648 component=ingester msg="instance removed from the KV store" ring=ingester
-loki-1  | level=info ts=2025-11-14T08:55:02.783896995Z caller=module_service.go:120 msg="module stopped" module=ingester
-loki-1  | level=info ts=2025-11-14T08:55:02.784444513Z caller=module_service.go:120 msg="module stopped" module=querier
-loki-1  | level=info ts=2025-11-14T08:55:02.784537487Z caller=module_service.go:120 msg="module stopped" module=ingester-querier
-loki-1  | level=info ts=2025-11-14T08:55:02.78525889Z caller=table_manager.go:77 index-store=tsdb-2020-10-24 msg="stopping table manager"
-loki-1  | level=info ts=2025-11-14T08:55:02.78527578Z caller=table_manager.go:136 index-store=tsdb-2020-10-24 msg="uploading tables"
-loki-1  | level=info ts=2025-11-14T08:55:02.785303164Z caller=module_service.go:120 msg="module stopped" module=store
-loki-1  | level=info ts=2025-11-14T08:55:03.283638583Z caller=module_service.go:120 msg="module stopped" module=query-frontend
-loki-1  | level=info ts=2025-11-14T08:55:03.283782329Z caller=module_service.go:120 msg="module stopped" module=query-frontend-tripperware
-loki-1  | level=info ts=2025-11-14T08:55:03.283991444Z caller=module_service.go:120 msg="module stopped" module=cache-generation-loader
-loki-1  | level=info ts=2025-11-14T08:55:03.284011488Z caller=module_service.go:120 msg="module stopped" module=query-scheduler
-loki-1  | level=info ts=2025-11-14T08:55:03.284059437Z caller=module_service.go:120 msg="module stopped" module=analytics
-loki-1  | level=info ts=2025-11-14T08:55:03.284105267Z caller=basic_lifecycler.go:242 msg="ring lifecycler is shutting down" ring=scheduler
-loki-1  | level=info ts=2025-11-14T08:55:03.284223515Z caller=basic_lifecycler.go:407 msg="unregistering instance from ring" ring=scheduler
-loki-1  | level=info ts=2025-11-14T08:55:03.284478967Z caller=basic_lifecycler.go:282 msg="instance removed from the ring" ring=scheduler
-loki-1  | level=info ts=2025-11-14T08:55:03.284510064Z caller=module_service.go:120 msg="module stopped" module=query-scheduler-ring
-loki-1  | level=info ts=2025-11-14T08:55:03.372995693Z caller=module_service.go:120 msg="module stopped" module=ring
-loki-1  | level=info ts=2025-11-14T08:55:03.373026137Z caller=module_service.go:120 msg="module stopped" module=memberlist-kv
-loki-1  | level=info ts=2025-11-14T08:55:03.373394988Z caller=modules.go:2291 msg="server stopped"
-loki-1  | level=info ts=2025-11-14T08:55:03.373408271Z caller=module_service.go:120 msg="module stopped" module=server
-loki-1  | level=info ts=2025-11-14T08:55:03.373436484Z caller=loki.go:581 msg="Loki stopped" running_time=2m1.599783943s
 
-==== OTEL-COLLECTOR CONFIG (ops/otel/config.yaml) ====
-receivers:
-  otlp:
-    protocols:
-      grpc:
-        endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
+==== GRAFANA ALLOY CONFIG (ops/alloy/config.river) ====
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
 
-processors:
-  batch: {}
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
 
-exporters:
-  prometheus:
-    endpoint: 0.0.0.0:9464
-  otlp/tempo:
-    endpoint: tempo:4317
-    tls:
-      insecure: true
-  otlphttp/loki:
-    endpoint: http://loki:3100/otlp/v1/logs
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+  }
+}
 
-service:
-  pipelines:
-    traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlp/tempo]
-    metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [prometheus]
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlphttp/loki]
+otelcol.processor.batch "default" {
+  output {
+    metrics = [otelcol.exporter.prometheus.default.input]
+    logs    = [otelcol.exporter.# loki removed for compute savings.default.input]
+    traces  = [otelcol.exporter.otlp.# tempo removed for compute savings.input]
+  }
+}
 
-==== TEMPO CONFIG (ops/tempo/tempo.yaml) ====
+otelcol.exporter.otlp "# tempo removed for compute savings" {
+  client {
+    endpoint = "# tempo removed for compute savings:9095"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+otelcol.exporter.# loki removed for compute savings "default" {
+  forward_to = [# loki removed for compute savings.write.default.receiver]
+}
+
+# loki removed for compute savings.write "default" {
+  endpoint {
+    url = "http://# loki removed for compute savings:3100/# loki removed for compute savings/api/v1/push"
+  }
+}
+
+==== TEMPO CONFIG (ops/# tempo removed for compute savings/# tempo removed for compute savings.yaml) ====
 server:
   http_listen_port: 3200
   grpc_listen_port: 9095
@@ -1078,7 +496,7 @@ storage:
   trace:
     backend: local
     local:
-      path: /var/tempo/traces
+      path: /var/# tempo removed for compute savings/traces
     block:
       bloom_filter_false_positive: 0.05
       version: v2
@@ -1088,9 +506,15 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: "otel-collector"
+  - job_name: "prometheus"
     static_configs:
-      - targets: ["otel-collector:9464"]
+      - targets: ["prometheus:9090"]
+  - job_name: "# tempo removed for compute savings"
+    static_configs:
+      - targets: ["# tempo removed for compute savings:3200"]
+  - job_name: "# loki removed for compute savings"
+    static_configs:
+      - targets: ["# loki removed for compute savings:3100"]
 
 ==== GRAFANA PROVISIONING TREE (ops/grafana/provisioning) ====
 ops/grafana/provisioning/datasources/datasources.yml
@@ -1098,17 +522,17 @@ ops/grafana/provisioning/datasources/datasources.yml
 ==== TRAINER ENV VARS (from container) ====
 Trainer container not found
 
-==== OTEL-COLLECTOR ENV VARS (from container) ====
-otel-collector container not found
+==== GRAFANA ALLOY ENV VARS (from container) ====
+grafana-alloy container not found
 
-==== BASIC CONNECTIVITY CHECK (host -> otel-collector -> tempo) ====
-Host -> otel-collector ports:
+==== BASIC CONNECTIVITY CHECK (host -> alloy -> # tempo removed for compute savings) ====
+Host -> grafana-alloy ports:
 nc: connectx to localhost port 4317 (tcp) failed: Connection refused
 nc: connectx to localhost port 4317 (tcp) failed: Connection refused
-nc to localhost:4317 failed (collector gRPC?)
+nc to localhost:4317 failed (alloy gRPC?)
 nc: connectx to localhost port 4318 (tcp) failed: Connection refused
 nc: connectx to localhost port 4318 (tcp) failed: Connection refused
-nc to localhost:4318 failed (collector HTTP?)
+nc to localhost:4318 failed (alloy HTTP?)
 
 If you want deeper connectivity tests (inside the network), we can add a small helper container once we see this output.
 

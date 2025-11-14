@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from .config import TelemetryConfig
 
 _LOGGER: logging.Logger | None = None
+_HANDLER_INSTALLED = False
 
 
 def get_logger(name: str = "battleship") -> logging.Logger:
@@ -42,6 +43,25 @@ def init_logging(config: TelemetryConfig) -> logging.Logger:
         provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
     set_logger_provider(provider)
-    handler = LoggingHandler(logger_provider=provider)
-    logger.addHandler(handler)
+    handler = LoggingHandler(level=logging.INFO, logger_provider=provider)
+
+    _install_root_handler(handler)
     return logger
+
+
+def _install_root_handler(handler: logging.Handler) -> None:
+    """Attach the OTLP logging handler to the root logger once."""
+    global _HANDLER_INSTALLED
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format=(
+                "%(asctime)s | %(levelname)s | %(name)s | %(message)s "
+                "| trace_id=%(otelTraceID)s span_id=%(otelSpanID)s"
+            ),
+        )
+
+    if not _HANDLER_INSTALLED:
+        root_logger.addHandler(handler)
+        _HANDLER_INSTALLED = True

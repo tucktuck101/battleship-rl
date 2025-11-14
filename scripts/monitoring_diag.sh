@@ -62,14 +62,14 @@ fi
 
 echo
 echo "==== CONTAINER IDS (from compose) ===="
-for svc in trainer otel-collector tempo loki prometheus grafana; do
+for svc in trainer grafana-alloy tempo loki prometheus grafana; do
   cid=$($COMPOSE -f "$STACK_FILE" ps -q "$svc" 2>/dev/null || true)
   echo "$svc: ${cid:-<no container>}"
 done
 
 echo
-echo "==== OTEL-COLLECTOR LOGS (last 200 lines) ===="
-$COMPOSE -f "$STACK_FILE" logs --tail=200 otel-collector || echo "otel-collector logs unavailable"
+echo "==== GRAFANA ALLOY LOGS (last 200 lines) ===="
+$COMPOSE -f "$STACK_FILE" logs --tail=200 grafana-alloy || echo "grafana-alloy logs unavailable"
 
 echo
 echo "==== TEMPO LOGS (last 200 lines) ===="
@@ -92,11 +92,11 @@ echo "==== LOKI LOGS (last 100 lines) ===="
 $COMPOSE -f "$STACK_FILE" logs --tail=100 loki || echo "loki logs unavailable"
 
 echo
-echo "==== OTEL-COLLECTOR CONFIG (ops/otel/config.yaml) ===="
-if [ -f "ops/otel/config.yaml" ]; then
-  sed -n '1,240p' ops/otel/config.yaml
+echo "==== GRAFANA ALLOY CONFIG (ops/alloy/config.river) ===="
+if [ -f "ops/alloy/config.river" ]; then
+  sed -n '1,240p' ops/alloy/config.river
 else
-  echo "ops/otel/config.yaml not found"
+  echo "ops/alloy/config.river not found"
 fi
 
 echo
@@ -133,19 +133,19 @@ else
 fi
 
 echo
-echo "==== OTEL-COLLECTOR ENV VARS (from container) ===="
-OTEL_ID=$($COMPOSE -f "$STACK_FILE" ps -q otel-collector 2>/dev/null || true)
-if [ -n "${OTEL_ID:-}" ]; then
-  docker inspect "$OTEL_ID" --format '{{json .Config.Env}}' || true
+echo "==== GRAFANA ALLOY ENV VARS (from container) ===="
+ALLOY_ID=$($COMPOSE -f "$STACK_FILE" ps -q grafana-alloy 2>/dev/null || true)
+if [ -n "${ALLOY_ID:-}" ]; then
+  docker inspect "$ALLOY_ID" --format '{{json .Config.Env}}' || true
 else
-  echo "otel-collector container not found"
+  echo "grafana-alloy container not found"
 fi
 
 echo
-echo "==== BASIC CONNECTIVITY CHECK (host -> otel-collector -> tempo) ===="
-echo "Host -> otel-collector ports:"
-nc -vz localhost 4317 2>&1 || echo "nc to localhost:4317 failed (collector gRPC?)"
-nc -vz localhost 4318 2>&1 || echo "nc to localhost:4318 failed (collector HTTP?)"
+echo "==== BASIC CONNECTIVITY CHECK (host -> alloy -> tempo) ===="
+echo "Host -> grafana-alloy ports:"
+nc -vz localhost 4317 2>&1 || echo "nc to localhost:4317 failed (alloy gRPC?)"
+nc -vz localhost 4318 2>&1 || echo "nc to localhost:4318 failed (alloy HTTP?)"
 
 echo
 echo "If you want deeper connectivity tests (inside the network), we can add a small helper container once we see this output."

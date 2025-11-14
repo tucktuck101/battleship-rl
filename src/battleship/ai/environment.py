@@ -45,6 +45,7 @@ WIN_REWARD = 1.0
 LOSE_PENALTY = -1.0
 MAX_STEPS = 400
 PLACEMENT_COMPLETION_REWARD = 0.05
+PLACEMENT_SUCCESS_REWARD = 0.01
 
 SHIP_TYPES: tuple[ShipType, ...] = tuple(ShipType)
 ORIENTATIONS: tuple[Orientation, ...] = tuple(Orientation)
@@ -263,13 +264,14 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             return self._get_observation(), reward, False, False, info
 
         self._pending_ships.remove(decoded.ship_type)
+        reward = PLACEMENT_SUCCESS_REWARD
         if not self._pending_ships:
             self._begin_firing_phase()
             outcome.placement_complete = True
             logger.info("player_placement_complete", extra={"actor": "agent"})
 
         self.step_count += 1
-        reward = self._calculate_reward(outcome)
+        reward += self._calculate_reward(outcome)
         observation = self._get_observation()
         info = {
             "action_mask": self._legal_action_mask(),
