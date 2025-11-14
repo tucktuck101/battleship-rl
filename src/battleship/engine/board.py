@@ -2,11 +2,30 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass, field
 from enum import Enum
 
+from battleship.telemetry import get_meter, get_tracer
+
 from .ship import Coordinate, Orientation, Ship, ShipType
+
+logger = logging.getLogger(__name__)
+tracer = get_tracer("battleship.engine.board")
+meter = get_meter("battleship.engine.board")
+
+PLACEMENT_COUNTER = meter.create_counter(
+    "battleship_engine_ship_placements",
+    unit="1",
+    description="Number of attempted ship placements",
+)
+
+SHOT_COUNTER = meter.create_counter(
+    "battleship_engine_shots",
+    unit="1",
+    description="Shots received by a board",
+)
 
 
 class CellState(Enum):
@@ -50,25 +69,70 @@ class Board:
 
     def place_ship(self, ship: Ship) -> bool:
         """Add ship to the board if placement is valid."""
-        if self.can_place_ship(ship):
-            self.ships.append(ship)
-            return True
-        return False
+        with tracer.start_as_current_span("board.place_ship") as span:
+            span.set_attribute("ship.type", ship.ship_type.name)
+            span.set_attribute("ship.length", ship.ship_type.length)
+            span.set_attribute("ship.start.row", ship.start.row)
+            span.set_attribute("ship.start.col", ship.start.col)
+            if self.can_place_ship(ship):
+                self.ships.append(ship)
+                PLACEMENT_COUNTER.add(1, attributes={"result": "success"})
+                logger.info(
+                    "ship_placed",
+                    extra={
+                        "ship_type": ship.ship_type.name,
+                        "orientation": ship.orientation.name,
+                        "row": ship.start.row,
+                        "col": ship.start.col,
+                    },
+                )
+                return True
+            PLACEMENT_COUNTER.add(1, attributes={"result": "failed"})
+            logger.warning(
+                "ship_placement_failed",
+                extra={
+                    "ship_type": ship.ship_type.name,
+                    "orientation": ship.orientation.name,
+                    "row": ship.start.row,
+                    "col": ship.start.col,
+                },
+            )
+            return False
 
     def receive_shot(self, coord: Coordinate) -> tuple[CellState, Ship | None]:
         """Register a shot at this board and return its outcome."""
-        if not self.is_valid_coordinate(coord):
-            raise ValueError("Shot out of bounds.")
-        if coord in self.shots:
-            raise ValueError("Cell has already been targeted.")
+        with tracer.start_as_current_span("board.receive_shot") as span:
+            span.set_attribute("shot.row", coord.row)
+            span.set_attribute("shot.col", coord.col)
+            if not self.is_valid_coordinate(coord):
+                logger.error(
+                    "shot_out_of_bounds", extra={"row": coord.row, "col": coord.col}
+                )
+                raise ValueError("Shot out of bounds.")
+            if coord in self.shots:
+                logger.error(
+                    "shot_duplicate", extra={"row": coord.row, "col": coord.col}
+                )
+                raise ValueError("Cell has already been targeted.")
 
-        for ship in self.ships:
-            if ship.hit(coord):
-                self.shots[coord] = CellState.HIT
-                return CellState.HIT, ship
+            for ship in self.ships:
+                if ship.hit(coord):
+                    self.shots[coord] = CellState.HIT
+                    span.set_attribute("shot.outcome", "hit")
+                    SHOT_COUNTER.add(1, attributes={"outcome": "hit"})
+                    logger.info(
+                        "shot_hit",
+                        extra={"row": coord.row, "col": coord.col, "ship_type": ship.ship_type.name},
+                    )
+                    return CellState.HIT, ship
 
-        self.shots[coord] = CellState.MISS
-        return CellState.MISS, None
+            self.shots[coord] = CellState.MISS
+            span.set_attribute("shot.outcome", "miss")
+            SHOT_COUNTER.add(1, attributes={"outcome": "miss"})
+            logger.info(
+                "shot_miss", extra={"row": coord.row, "col": coord.col}
+            )
+            return CellState.MISS, None
 
     def get_cell_state(self, coord: Coordinate) -> CellState:
         """Return the state of a cell after shots have been taken."""
@@ -80,16 +144,23 @@ class Board:
 
     def random_placement(self, rng: random.Random) -> None:
         """Randomly place one ship of each type on the board."""
-        self.ships.clear()
-        self.shots.clear()
-        for ship_type in ShipType:
-            placed = False
-            while not placed:
-                orientation = rng.choice(list(Orientation))
-                start_row = rng.randrange(self.size)
-                start_col = rng.randrange(self.size)
-                candidate = Ship(ship_type, Coordinate(start_row, start_col), orientation)
-                placed = self.place_ship(candidate)
+        with tracer.start_as_current_span("board.random_placement"):
+            self.ships.clear()
+            self.shots.clear()
+            for ship_type in ShipType:
+                placed = False
+                attempts = 0
+                while not placed:
+                    orientation = rng.choice(list(Orientation))
+                    start_row = rng.randrange(self.size)
+                    start_col = rng.randrange(self.size)
+                    candidate = Ship(ship_type, Coordinate(start_row, start_col), orientation)
+                    placed = self.place_ship(candidate)
+                    attempts += 1
+                logger.debug(
+                    "random_ship_placed",
+                    extra={"ship_type": ship_type.name, "attempts": attempts},
+                )
 
     def _occupied_coordinates(self) -> set[Coordinate]:
         coords: set[Coordinate] = set()

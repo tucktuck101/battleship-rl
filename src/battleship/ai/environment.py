@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar, cast
@@ -52,6 +53,8 @@ PLACEMENT_PER_SHIP = NUM_CELLS * len(ORIENTATIONS)
 NDArrayFloat: TypeAlias = npt.NDArray[np.float32]
 ActionMask: TypeAlias = npt.NDArray[np.int8]
 OpponentPolicy = Callable[[NDArrayFloat, Dict[str, Any]], int]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -170,6 +173,14 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             "phase": self.phase,
             "state": self.get_state_for_player(Player.PLAYER1),
         }
+        logger.info(
+            "env_reset",
+            extra={
+                "phase": self.phase,
+                "allow_agent_placement": self.allow_agent_placement,
+                "allow_opponent_placement": self.allow_opponent_placement,
+            },
+        )
         return observation, info
 
     def step(self, action: int) -> tuple[NDArrayFloat, float, bool, bool, dict[str, Any]]:
@@ -199,6 +210,16 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
+            logger.warning(
+                "invalid_action",
+                extra={
+                    "phase": self.phase,
+                    "reason": "placement",
+                    "ship_type": getattr(decoded, "ship_type", None).name
+                    if isinstance(decoded, PlacementAction)
+                    else None,
+                },
+            )
             return self._get_observation(), reward, False, False, info
 
         if decoded.ship_type not in self._pending_ships:
@@ -210,6 +231,13 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
+            logger.warning(
+                "invalid_action",
+                extra={
+                    "phase": self.phase,
+                    "reason": "placement_pending",
+                },
+            )
             return self._get_observation(), reward, False, False, info
 
         player_board = self.game.boards[Player.PLAYER1]
@@ -223,12 +251,20 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
+            logger.warning(
+                "invalid_action",
+                extra={
+                    "phase": self.phase,
+                    "reason": "placement_conflict",
+                },
+            )
             return self._get_observation(), reward, False, False, info
 
         self._pending_ships.remove(decoded.ship_type)
         if not self._pending_ships:
             self._begin_firing_phase()
             outcome.placement_complete = True
+            logger.info("player_placement_complete")
 
         self.step_count += 1
         reward = self._calculate_reward(outcome)
@@ -255,6 +291,10 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
+            logger.warning(
+                "invalid_action",
+                extra={"phase": self.phase, "reason": "placement_during_firing"},
+            )
             return self._get_observation(), reward, False, False, info
 
         target_coord = decoded
@@ -268,6 +308,10 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
+            logger.warning(
+                "invalid_action",
+                extra={"phase": self.phase, "reason": "fire_illegal", "row": target_coord.row, "col": target_coord.col},
+            )
             return self._get_observation(), reward, False, False, info
 
         # Agent move
@@ -581,8 +625,11 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
 
         if pending:
             board.random_placement(self.rng)
+            logger.warning("opponent_manual_placement_fallback", extra={"remaining": len(pending)})
 
         self._opponent_pending_ships = set()
+
+        logger.info("opponent_manual_placement_complete")
 
     def _enter_in_progress_phase(self) -> None:
         if self.game is None:
@@ -591,3 +638,4 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         self.game.current_player = Player.PLAYER1
         self.game.winner = None
         self.phase = "firing"
+        logger.info("env_phase_transition", extra={"phase": self.phase})

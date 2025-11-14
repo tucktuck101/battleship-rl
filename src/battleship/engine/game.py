@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import dataclass
 from enum import Enum
 
+from battleship.telemetry import get_meter, get_tracer
+
 from .board import Board, CellState
 from .ship import Coordinate, Ship
+
+logger = logging.getLogger(__name__)
+tracer = get_tracer("battleship.engine.game")
+meter = get_meter("battleship.engine.game")
+
+MOVE_COUNTER = meter.create_counter(
+    "battleship_engine_moves",
+    unit="1",
+    description="Number of moves made in BattleshipGame",
+)
 
 
 class GamePhase(Enum):
@@ -62,29 +75,41 @@ class BattleshipGame:
 
     def setup_random(self) -> None:
         """Randomly place fleets for both players and start the game."""
-        for board in self.boards.values():
-            board.random_placement(self._rng)
-        self.phase = GamePhase.IN_PROGRESS
-        self.current_player = Player.PLAYER1
-        self.winner = None
+        with tracer.start_as_current_span("game.setup_random"):
+            for board in self.boards.values():
+                board.random_placement(self._rng)
+            self.phase = GamePhase.IN_PROGRESS
+            self.current_player = Player.PLAYER1
+            self.winner = None
+            logger.info("game_setup_random_complete")
 
     def make_move(self, player: Player, coord: Coordinate) -> tuple[CellState, Ship | None]:
         """Apply a single shot, enforcing turn order and win conditions."""
-        if self.phase is not GamePhase.IN_PROGRESS:
-            raise RuntimeError("Game is not in progress.")
-        if player is not self.current_player:
-            raise RuntimeError("It is not this player's turn.")
+        with tracer.start_as_current_span("game.make_move") as span:
+            span.set_attribute("player", player.value)
+            span.set_attribute("row", coord.row)
+            span.set_attribute("col", coord.col)
+            if self.phase is not GamePhase.IN_PROGRESS:
+                logger.error("move_rejected_game_not_in_progress")
+                raise RuntimeError("Game is not in progress.")
+            if player is not self.current_player:
+                logger.error("move_rejected_wrong_player", extra={"current": self.current_player.value})
+                raise RuntimeError("It is not this player's turn.")
 
-        target_board = self.boards[player.opponent()]
-        result = target_board.receive_shot(coord)
+            target_board = self.boards[player.opponent()]
+            result = target_board.receive_shot(coord)
 
-        if target_board.all_ships_sunk():
-            self.winner = player
-            self.phase = GamePhase.FINISHED
-        else:
-            self.current_player = player.opponent()
+            if target_board.all_ships_sunk():
+                self.winner = player
+                self.phase = GamePhase.FINISHED
+                span.set_attribute("game.winner", player.value)
+                logger.info("game_finished", extra={"winner": player.value})
+            else:
+                self.current_player = player.opponent()
+                span.set_attribute("next_player", self.current_player.value)
 
-        return result
+            MOVE_COUNTER.add(1, attributes={"result": result[0].value, "player": player.value})
+            return result
 
     def get_state(self) -> GameState:
         """Return an immutable view of the current match."""

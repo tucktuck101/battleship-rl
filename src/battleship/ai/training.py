@@ -74,6 +74,14 @@ class Trainer:
             unit="1",
             description="Win rate observed during evaluation",
         )
+        logger.info(
+            "trainer_initialised",
+            extra={
+                "episodes": config.num_episodes,
+                "save_dir": config.save_dir,
+                "opponent": config.opponent,
+            },
+        )
 
         self.env = BattleshipEnv(
             rng_seed=config.env_seed,
@@ -110,9 +118,10 @@ class Trainer:
         config = TelemetryConfig(
             enable_tracing=True,
             enable_metrics=True,
-            enable_logging=False,
+            enable_logging=True,
             otlp_traces_endpoint=normalized,
             otlp_metrics_endpoint=normalized,
+            otlp_logs_endpoint=normalized,
             service_name="battleship-trainer",
             service_namespace="ml",
         )

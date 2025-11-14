@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -17,6 +18,8 @@ import numpy.typing as npt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F  # noqa: N812
+
+logger = logging.getLogger(__name__)
 
 
 class BattleshipDQN(nn.Module):
@@ -163,6 +166,14 @@ class DQNAgent:
 
         self.epsilon = self.config.epsilon_start
         self.train_steps = 0
+        logger.info(
+            "agent_initialised",
+            extra={
+                "obs_channels": obs_channels,
+                "num_actions": num_actions,
+                "device": str(self.device),
+            },
+        )
 
     def select_action(
         self,
@@ -231,6 +242,7 @@ class DQNAgent:
             "epsilon": self.epsilon,
         }
         torch.save(payload, Path(path))
+        logger.info("agent_checkpoint_saved", extra={"path": str(path)})
 
     def load(self, path: str | Path) -> None:
         payload = torch.load(Path(path), map_location=self.device)
@@ -240,6 +252,7 @@ class DQNAgent:
             self.config = AgentConfig(**payload["config"])
         if "epsilon" in payload:
             self.epsilon = float(payload["epsilon"])
+        logger.info("agent_checkpoint_loaded", extra={"path": str(path)})
 
     def _prepare_state(self, state: TensorLike) -> torch.Tensor:
         tensor = state.detach() if isinstance(state, torch.Tensor) else torch.from_numpy(state)

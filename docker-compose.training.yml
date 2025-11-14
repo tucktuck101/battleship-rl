@@ -60,7 +60,8 @@ services:
 
   tempo:
     image: grafana/tempo:latest
-    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
     ports:
       - "3200:3200"
     volumes:
@@ -71,11 +72,9 @@ services:
 
   loki:
     image: grafana/loki:latest
-    command: ["-config.file=/etc/loki/config.yml"]
+    networks:
+      monitoring: null
     ports:
       - "3100:3100"
     volumes:
-      - ./ops/loki/config.yml:/etc/loki/config.yml:ro
       - loki-data:/var/loki
-    networks:
-      - monitoring

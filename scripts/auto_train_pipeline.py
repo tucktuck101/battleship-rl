@@ -19,11 +19,16 @@ Each phase:
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
 from battleship.ai.training import Trainer, TrainingConfig
+from battleship.telemetry import TelemetryConfig, get_tracer, init_telemetry
 
 # ---------------------------------------------------------------------------
 # High-level configuration
@@ -31,6 +36,8 @@ from battleship.ai.training import Trainer, TrainingConfig
 
 
 RUNS_DIR = Path("runs")
+logger = logging.getLogger(__name__)
+_TRACER_NAME = "battleship.pipeline.auto"
 
 
 @dataclass
@@ -117,17 +124,20 @@ def run_phase_adaptive(
     max_total_episodes = criteria.episodes_per_epoch * criteria.max_epochs
     config = replace(base_config, num_episodes=max_total_episodes)
 
-    print("=" * 80)
-    print(f"Starting phase: {phase_name}")
-    print(f"  Save dir:           {save_dir}")
-    print(f"  Opponent mode:      {config.opponent}")
-    print(f"  Opponent checkpoint:{config.opponent_checkpoint}")
-    print(f"  Episodes/epoch:     {criteria.episodes_per_epoch}")
-    print(f"  Max epochs:         {criteria.max_epochs}")
-    print(f"  Min epochs:         {criteria.min_epochs}")
-    print(f"  Target win_rate:    {criteria.target_win_rate:.0%}")
-    print(f"  Patience:           {criteria.patience}")
-    print("=" * 80)
+    logger.info(
+        "phase_start",
+        extra={
+            "phase": phase_name,
+            "save_dir": str(save_dir),
+            "opponent": config.opponent,
+            "opponent_checkpoint": config.opponent_checkpoint,
+            "episodes_per_epoch": criteria.episodes_per_epoch,
+            "max_epochs": criteria.max_epochs,
+            "min_epochs": criteria.min_epochs,
+            "target_win_rate": criteria.target_win_rate,
+            "patience": criteria.patience,
+        },
+    )
 
     trainer = Trainer(config)
 
@@ -135,28 +145,41 @@ def run_phase_adaptive(
     total_episodes_run = 0
     last_checkpoint: Optional[Path] = None
 
-    for epoch_idx in range(1, criteria.max_epochs + 1):
-        # ----------------- training episodes for this epoch -----------------
-        for _ in range(criteria.episodes_per_epoch):
-            total_episodes_run += 1
-            metrics = trainer._train_episode(episode_index=total_episodes_run)
-            print(
-                f"[{phase_name}] Ep {total_episodes_run:5d} "
-                f"reward={metrics['reward']:.3f} "
-                f"steps={metrics['steps']:.0f} "
-                f"mean_loss={metrics['mean_loss']:.4f} "
-                f"epsilon={metrics['epsilon']:.3f}"
-            )
+    phase_tracer = get_tracer(_TRACER_NAME)
 
-        # ----------------- evaluation at end of epoch -----------------------
-        eval_metrics = trainer._evaluate()
-        epoch_metrics_history.append(eval_metrics)
-        print(
-            f"[{phase_name}] Epoch {epoch_idx:3d} eval -> "
-            f"mean_reward={eval_metrics['mean_reward']:.3f} "
-            f"win_rate={eval_metrics['win_rate']:.2%} "
-            f"avg_length={eval_metrics['avg_length']:.1f}"
-        )
+    with phase_tracer.start_as_current_span(
+        "pipeline.phase", attributes={"phase": phase_name}
+    ):
+        for epoch_idx in range(1, criteria.max_epochs + 1):
+            # ----------------- training episodes for this epoch -----------------
+            for _ in range(criteria.episodes_per_epoch):
+                total_episodes_run += 1
+                metrics = trainer._train_episode(episode_index=total_episodes_run)
+                logger.info(
+                    "phase_episode",
+                    extra={
+                        "phase": phase_name,
+                        "episode": total_episodes_run,
+                        "reward": metrics["reward"],
+                        "steps": metrics["steps"],
+                        "mean_loss": metrics["mean_loss"],
+                        "epsilon": metrics["epsilon"],
+                    },
+                )
+
+            # ----------------- evaluation at end of epoch -----------------------
+            eval_metrics = trainer._evaluate()
+            epoch_metrics_history.append(eval_metrics)
+            logger.info(
+                "phase_epoch_eval",
+                extra={
+                    "phase": phase_name,
+                    "epoch": epoch_idx,
+                    "mean_reward": eval_metrics["mean_reward"],
+                    "win_rate": eval_metrics["win_rate"],
+                    "avg_length": eval_metrics["avg_length"],
+                },
+            )
 
         # Save checkpoint and metrics after each epoch
         checkpoint = save_dir / f"checkpoint_epoch{epoch_idx}.pt"
@@ -166,7 +189,10 @@ def run_phase_adaptive(
 
         # Decide whether to stop this phase
         if ready_to_advance(epoch_metrics_history, criteria):
-            print(f"[{phase_name}] Criteria met at epoch {epoch_idx}; " f"advancing to next phase.")
+            logger.info(
+                "phase_criteria_met",
+                extra={"phase": phase_name, "epoch": epoch_idx},
+            )
             break
 
     if last_checkpoint is None:
@@ -174,15 +200,19 @@ def run_phase_adaptive(
         last_checkpoint = save_dir / "checkpoint_final.pt"
         trainer.agent.save(last_checkpoint)
         trainer._save_metrics()
-        print(
-            f"[{phase_name}] No checkpoints created unexpectedly; "
-            f"saved fallback checkpoint at {last_checkpoint}"
+        logger.warning(
+            "phase_no_checkpoint",
+            extra={"phase": phase_name, "fallback": str(last_checkpoint)},
         )
-
-    print(f"[{phase_name}] Completed after {len(epoch_metrics_history)} epochs.")
-    print(f"[{phase_name}] Total episodes run: {total_episodes_run}")
-    print(f"[{phase_name}] Last checkpoint: {last_checkpoint}")
-    print("=" * 80)
+    logger.info(
+        "phase_complete",
+        extra={
+            "phase": phase_name,
+            "epochs": len(epoch_metrics_history),
+            "episodes": total_episodes_run,
+            "last_checkpoint": str(last_checkpoint),
+        },
+    )
     return last_checkpoint
 
 
@@ -192,6 +222,8 @@ def run_phase_adaptive(
 
 
 def main() -> None:
+    _configure_pipeline_telemetry()
+    logger.info("pipeline_start")
     ensure_dir(RUNS_DIR)
 
     # ----------------- Phase 1: vs random opponent -------------------------
@@ -234,11 +266,46 @@ def main() -> None:
         criteria=SELF_PLAY_CRITERIA,
     )
 
-    print("Pipeline complete.")
-    print(f"  Phase 1 (random_baseline) checkpoint:   {baseline_ckpt}")
-    print(f"  Phase 2 (vs_baseline_ckpt) checkpoint:  {vs_baseline_ckpt}")
-    print(f"  Phase 3 (self_play) checkpoint:         {self_play_ckpt}")
+    logger.info(
+        "pipeline_complete",
+        extra={
+            "random_baseline": str(baseline_ckpt),
+            "vs_baseline_ckpt": str(vs_baseline_ckpt),
+            "self_play": str(self_play_ckpt),
+        },
+    )
 
 
 if __name__ == "__main__":
     main()
+
+
+_TELEMETRY_CONFIGURED = False
+
+
+def _configure_pipeline_telemetry() -> None:
+    global _TELEMETRY_CONFIGURED
+    if _TELEMETRY_CONFIGURED:
+        return
+
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    normalized = _normalize_endpoint(endpoint)
+    config = TelemetryConfig(
+        enable_tracing=True,
+        enable_metrics=True,
+        enable_logging=True,
+        otlp_traces_endpoint=normalized,
+        otlp_metrics_endpoint=normalized,
+        otlp_logs_endpoint=normalized,
+        service_name="battleship-pipeline",
+        service_namespace="ml",
+    )
+    init_telemetry(config)
+    LoggingInstrumentor().instrument()
+    _TELEMETRY_CONFIGURED = True
+
+
+def _normalize_endpoint(value: str | None) -> str | None:
+    if not value:
+        return None
+    return value.removeprefix("http://").removeprefix("https://")
