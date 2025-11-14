@@ -19,7 +19,7 @@ Battleship-RL keeps deterministic game logic on the server while exposing REST/W
 - **Players** interact exclusively via the browser-based Canvas/DOM UI.
 - **Agent Developers** register remote agents, schedule matches, and inspect telemetry/replays.
 - **OAuth/OIDC provider (Auth0)** authenticates users and issues JWTs.
-- **Observability stack (OTLP collector + Grafana/Tempo/Loki)** stores traces/metrics/logs.
+- **Observability stack (OTLP collector + Grafana/Prometheus/Tempo/Loki)** stores traces/metrics/logs.
 - **Remote Agents** (external services) participate in matches through a callback protocol.
 
 ### 1.3 Context Diagram
@@ -40,7 +40,7 @@ C4Context
     }
 
     System_Ext(Auth, "OAuth/OIDC Provider (Auth0)", "Issues JWTs consumed by the FastAPI service.")
-    System_Ext(Observability, "Observability Stack (OTLP Collector + Grafana/Tempo/Loki)", "Aggregates telemetry for dashboards and alerting.")
+    System_Ext(Observability, "Observability Stack (OTLP Collector + Grafana/Prometheus/Tempo/Loki)", "Aggregates telemetry for dashboards and alerting.")
 
     Rel(Player, WebUI, "Uses via browser", "HTTPS")
     Rel(WebUI, API, "REST + WebSockets", "JSON / WS")
@@ -65,7 +65,7 @@ C4Context
 - **Match Orchestrator & RL Trainer (Gymnasium + DQN)**: Runs AI-vs-AI matches, training jobs, and interacts with `BattleshipEnv`.
 - **Deterministic Battleship Engine**: Enforces ship placement, turn order, win detection, and instrumentation hooks.
 - **SQL Server**: Stores users, rooms, matches, moves, agents, ratings, training jobs, and replay transcripts.
-- **Telemetry Layer / Observability Stack**: OpenTelemetry SDKs (Python + JS) streaming telemetry through OTLP collectors to Grafana/Tempo/Loki.
+- **Telemetry Layer / Observability Stack**: OpenTelemetry SDKs (Python + JS) streaming telemetry through OTLP collectors to Grafana/Prometheus/Tempo/Loki.
 - **OAuth/OIDC Authentication**: Auth0 issuing JWTs validated by FastAPI.
 - **Remote Agent Ecosystem**: External services registered via API to supply actions in orchestrated battles.
 
@@ -189,7 +189,7 @@ Deliver enterprise-grade observability across backend, engine, trainer, and web 
 #### 2.8.2 Responsibilities
 - Provide OTEL tracer/meter/logger singletons for Python modules.
 - Collect browser telemetry via OTEL JS SDK (page views, API calls, WebSocket events).
-- Ship telemetry to OTLP collectors, Grafana/Tempo/Loki dashboards, and correlate IDs with SQL entities.
+- Ship telemetry to OTLP collectors, Grafana/Prometheus/Tempo/Loki dashboards, and correlate IDs with SQL entities.
 
 #### 2.8.3 Interfaces (In/Out)
 - **Inbound**: Instrumented spans/metrics/logs from engine, API, trainer, and web UI.
