@@ -487,11 +487,14 @@ flowchart LR
 - The `ops/` directory contains ready-to-use configs for Alloy (`ops/alloy/config.river`), Prometheus, Grafana dashboards, Loki, and Tempo—these are mounted by the compose stack or can be repurposed for Kubernetes ConfigMaps.
 - Kubernetes deployment specs live under `k8s/` (pods/services placeholders) and will eventually host FastAPI, match workers, SQL proxies, and observability agents inside the same cluster.
 
-### 6.3 Environments (dev/test/prod)
+### 6.3 Environments (Dev / Test / Training / Prod)
 
-- **Dev**: Auth0 development tenant, SQL Server dev database, OTLP pointed at the local Alloy collector, and relaxed JWT audiences for rapid iteration. Feature flags default to enabling verbose telemetry and mock remote agents.
-- **Test/CI**: Headless/test Auth0 credentials, ephemeral SQL Server (or containerized equivalent), OTLP endpoints referencing CI-friendly collectors; pipelines automatically seed test data and destroy resources afterward.
-- **Prod**: Dedicated Auth0 tenant + JWKS, managed SQL Server with backups, OTLP routed to the enterprise Grafana stack, strict JWT scopes, and locked-down remote-agent registration requiring owner verification. Deployments roll out via blue/green or progressive delivery using Kubernetes tooling.
+- **Dev**: Auth0 development tenant, SQL Server dev database (local container or shared instance), OTLP pointed at the local Alloy collector, and relaxed JWT audiences/feature flags for experimentation (e.g., verbose telemetry, mock remote agents).
+- **Test / CI**: Headless Auth0 credentials, ephemeral SQL Server (containerized or provisioned per pipeline), OTLP endpoints targeting CI-friendly collectors; workflows automatically seed test data and tear resources down after runs.
+- **Training**: Auth scopes limited to service accounts launching DQN jobs; SQL Server tables partitioned or tagged for training telemetry; OTLP directed to Grafana Alloy/Tempo via `docker-compose.training.yml` or Kubernetes job manifests so long-running metrics don’t flood Dev/Prod collectors. Training runs can opt into GPU acceleration by passing a `-cuda` flag, which toggles CUDA-enabled containers/nodes when available.
+- **Prod**: Dedicated Auth0 tenant + JWKS, managed SQL Server with backups/replication, OTLP routed to the enterprise Grafana stack, strict JWT scopes/role mappings, and remote-agent registration gated by owner verification. Deployments roll out with blue/green or progressive delivery via Kubernetes.
+
+
 
 ---
 
