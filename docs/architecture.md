@@ -413,7 +413,7 @@ flowchart LR
 
 - The browser SPA is being designed in the root-level `WEB_UI_README.md`, which tracks the React/TypeScript build plan, Canvas replay viewer, and WebSocket-driven lobby/match views.
 - Until the SPA sources land in this repo, the UI contract is expressed through the FastAPI endpoints documented in §3.2 and the telemetry wiring in §3.6. All client-state/replay requirements are enumerated in `WEB_UI_README.md#3-Target-Web-UI-Overview`.
-- The existing `scripts/run_ui.py` + `src/battleship/ui/game_ui.py` pair provide reference rendering logic (Pygame) that the browser client should mirror when implementing Canvas animations and lobby flows.
+- Every interface described in this document (REST, WebSocket, telemetry, replays) assumes the browser-based client as the sole UI; there is no desktop fallback in the supported architecture.
 
 ### 4.2 Code for FastAPI Service
 
