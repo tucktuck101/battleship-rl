@@ -42,6 +42,22 @@ def test_replay_buffer_push_and_sample() -> None:
     assert dones.shape == (4,)
 
 
+def test_replay_buffer_handles_overwrite_and_empty_sample() -> None:
+    device = torch.device("cpu")
+    buffer = ReplayBuffer(capacity=3, state_shape=(C, 10, 10), device=device)
+    dummy_state = np.zeros((C, 10, 10), dtype=np.float32)
+
+    with pytest.raises(ValueError):
+        buffer.sample(batch_size=1)
+
+    for i in range(5):
+        buffer.push(dummy_state, i, float(i), dummy_state, False)
+
+    assert len(buffer) == 3
+    stored_actions = set(int(action) for action in buffer.actions[: buffer.size].tolist())
+    assert stored_actions == {2, 3, 4}
+
+
 def test_select_action_epsilon_greedy(monkeypatch: pytest.MonkeyPatch) -> None:
     config = AgentConfig(
         epsilon_start=1.0,
@@ -115,3 +131,34 @@ def test_train_step_returns_loss() -> None:
 
     loss = agent.train_step()
     assert isinstance(loss, float)
+
+
+def test_train_step_updates_policy_weights() -> None:
+    config = AgentConfig(
+        buffer_capacity=64,
+        min_buffer_size=32,
+        batch_size=32,
+        target_update_interval=100,
+    )
+    agent = DQNAgent(
+        obs_channels=C,
+        num_actions=NUM_ACTIONS,
+        config=config,
+        device=torch.device("cpu"),
+    )
+
+    def random_state() -> NDArrayFloat:
+        return np.random.rand(C, 10, 10).astype(np.float32)
+
+    for _ in range(config.min_buffer_size):
+        state = random_state()
+        next_state = random_state()
+        action = random.randint(0, NUM_ACTIONS - 1)
+        reward = random.random()
+        done = random.random() < 0.2
+        agent.store_transition(state, action, reward, next_state, done)
+
+    before = [param.clone().detach() for param in agent.policy_net.parameters()]
+    agent.train_step()
+    after = list(agent.policy_net.parameters())
+    assert any(not torch.allclose(b, a) for b, a in zip(before, after))

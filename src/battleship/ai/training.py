@@ -46,6 +46,8 @@ class TrainingConfig:
     opponent: str = "random"
     opponent_checkpoint: str | None = None
     opponent_manual_placement: bool = False
+    rollout_episodes: int = 0
+    rollout_path: str = "policy_rollouts.jsonl"
 
 
 class Trainer:
@@ -110,6 +112,7 @@ class Trainer:
         self.episode_rewards: list[float] = []
         self.episode_losses: list[float] = []
         self.eval_history: list[dict[str, float]] = []
+        self.rollout_history: list[dict[str, Any]] = []
         self._initialise_opponent_agent(obs_channels=obs_channels, agent_config=agent_config)
 
     def _configure_telemetry(self) -> None:
@@ -271,12 +274,86 @@ class Trainer:
             self.eval_history.append(metrics)
             return metrics
 
+    def _policy_rollout(
+        self, episodes: int | None = None, output_path: Path | None = None
+    ) -> list[dict[str, Any]]:
+        """Generate rollout summaries for deterministic policy playthroughs."""
+
+        total_episodes = episodes if episodes is not None else self.config.rollout_episodes
+        if total_episodes <= 0:
+            return []
+
+        results: list[dict[str, Any]] = []
+        cached_epsilon = self.agent.epsilon
+        self.agent.epsilon = 0.0
+        opponent_cached: float | None = None
+        if self.opponent_agent is not None and self.opponent_agent is not self.agent:
+            opponent_cached = getattr(self.opponent_agent, "epsilon", None)
+            if opponent_cached is not None:
+                self.opponent_agent.epsilon = 0.0
+
+        for episode in range(1, total_episodes + 1):
+            obs, info = self.env.reset()
+            trajectory: list[dict[str, Any]] = []
+            total_reward = 0.0
+            steps = 0
+            terminated_flag = False
+            truncated_flag = False
+
+            for _ in range(self.config.max_steps_per_episode):
+                mask = info.get("action_mask")
+                action = self.agent.select_action(obs, mask, training=False)
+                obs, reward, terminated, truncated, info = self.env.step(action)
+                trajectory.append(
+                    {
+                        "step": steps,
+                        "action": action,
+                        "reward": reward,
+                        "phase": info.get("phase"),
+                    }
+                )
+                total_reward += reward
+                steps += 1
+                terminated_flag = terminated
+                truncated_flag = truncated
+                if terminated_flag or truncated_flag:
+                    break
+
+            summary = {
+                "episode": episode,
+                "steps": steps,
+                "total_reward": total_reward,
+                "winner": info.get("winner"),
+                "terminated": terminated_flag,
+                "truncated": truncated_flag,
+                "trajectory": trajectory,
+            }
+            results.append(summary)
+
+        self.agent.epsilon = cached_epsilon
+        if (
+            self.opponent_agent is not None
+            and self.opponent_agent is not self.agent
+            and opponent_cached is not None
+        ):
+            self.opponent_agent.epsilon = opponent_cached
+
+        if output_path is not None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with output_path.open("a", encoding="utf-8") as fp:
+                for summary in results:
+                    fp.write(json.dumps(summary) + "\n")
+
+        self.rollout_history.extend(results)
+        return results
+
     def _save_metrics(self) -> None:
         payload = {
             "config": asdict(self.config),
             "episode_rewards": self.episode_rewards,
             "episode_losses": self.episode_losses,
             "eval_history": self.eval_history,
+            "rollout_history": self.rollout_history,
         }
         (self.save_path / "metrics.json").write_text(json.dumps(payload, indent=2))
 
@@ -296,6 +373,18 @@ def main() -> None:
         action="store_true",
         help="Let the opponent place its own ships via its policy.",
     )
+    parser.add_argument(
+        "--rollout-episodes",
+        type=int,
+        default=0,
+        help="Number of policy rollout episodes to record after each evaluation interval.",
+    )
+    parser.add_argument(
+        "--rollout-path",
+        type=str,
+        default="policy_rollouts.jsonl",
+        help="Relative path (under save-dir) for JSONL rollout summaries.",
+    )
     args = parser.parse_args()
 
     opponent_mode = "random"
@@ -312,6 +401,8 @@ def main() -> None:
         opponent=opponent_mode,
         opponent_checkpoint=opponent_checkpoint,
         opponent_manual_placement=args.opponent_placement,
+        rollout_episodes=args.rollout_episodes,
+        rollout_path=args.rollout_path,
     )
     trainer = Trainer(config)
 
@@ -333,6 +424,15 @@ def main() -> None:
             checkpoint = Path(config.save_dir) / f"checkpoint_ep{episode}.pt"
             trainer.agent.save(checkpoint)
             trainer._save_metrics()
+            if config.rollout_episodes > 0:
+                rollout_file = Path(config.save_dir) / config.rollout_path
+                rollouts = trainer._policy_rollout(output_path=rollout_file)
+                display_path = (
+                    rollout_file.relative_to(Path.cwd())
+                    if rollout_file.is_absolute()
+                    else rollout_file
+                )
+                print(f"  Rollout -> recorded {len(rollouts)} episodes to {display_path}")
 
 
 if __name__ == "__main__":

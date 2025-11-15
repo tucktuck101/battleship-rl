@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar, cast
 
@@ -34,6 +35,11 @@ else:
 from battleship.engine.board import Board, CellState
 from battleship.engine.game import BattleshipGame, GamePhase, Player
 from battleship.engine.ship import Coordinate, Orientation, Ship, ShipType
+from battleship.telemetry import (
+    get_logger as get_otel_logger,
+    get_tracer as get_otel_tracer,
+    record_game_metric,
+)
 
 BOARD_SIZE = 10
 NUM_CELLS = BOARD_SIZE * BOARD_SIZE
@@ -55,7 +61,7 @@ NDArrayFloat: TypeAlias = npt.NDArray[np.float32]
 ActionMask: TypeAlias = npt.NDArray[np.int8]
 OpponentPolicy = Callable[[NDArrayFloat, Dict[str, Any]], int]
 
-logger = logging.getLogger(__name__)
+logger = get_otel_logger("battleship.env")
 
 
 @dataclass
@@ -124,6 +130,8 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         self._ship_type_to_idx: dict[ShipType, int] = {
             ship: idx for idx, ship in enumerate(SHIP_TYPES)
         }
+        self._episode_id = 0
+        self._tracer = get_otel_tracer("battleship.env")
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -134,53 +142,61 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
         elif self._base_seed is not None and self.game is None:
             self.rng.seed(self._base_seed)
 
-        game_seed = self.rng.randint(0, 2**31 - 1)
-        self.game = BattleshipGame(rng_seed=game_seed)
-        for player in Player:
-            self.game.boards[player] = Board(owner=player.value)
+        self._episode_id += 1
+        start = time.perf_counter()
+        with self._tracer.start_as_current_span("battleship.env.reset") as span:
+            span.set_attribute("episode_id", self._episode_id)
+            span.set_attribute("allow_agent_placement", self.allow_agent_placement)
+            span.set_attribute("allow_opponent_placement", self.allow_opponent_placement)
 
-        self._pending_ships = set()
-        self._opponent_pending_ships = set()
-        self.game.phase = GamePhase.SETUP
-        self.game.current_player = Player.PLAYER1
-        self.game.winner = None
+            game_seed = self.rng.randint(0, 2**31 - 1)
+            self.game = BattleshipGame(rng_seed=game_seed)
+            for player in Player:
+                self.game.boards[player] = Board(owner=player.value)
 
-        if self.allow_agent_placement:
-            self.phase = "placement"
-            self._pending_ships = set(SHIP_TYPES)
-        else:
-            self.phase = "firing"
-            self._randomly_place_player(Player.PLAYER1)
+            self._pending_ships = set()
+            self._opponent_pending_ships = set()
+            self.game.phase = GamePhase.SETUP
+            self.game.current_player = Player.PLAYER1
+            self.game.winner = None
 
-        if self.allow_opponent_placement:
-            self._opponent_pending_ships = set(SHIP_TYPES)
-            self._execute_opponent_manual_placement()
-        else:
-            self._randomly_place_player(Player.PLAYER2)
+            if self.allow_agent_placement:
+                self.phase = "placement"
+                self._pending_ships = set(SHIP_TYPES)
+            else:
+                self.phase = "firing"
+                self._randomly_place_player(Player.PLAYER1)
 
-        if not self.allow_agent_placement:
-            self._enter_in_progress_phase()
+            if self.allow_opponent_placement:
+                self._opponent_pending_ships = set(SHIP_TYPES)
+                self._execute_opponent_manual_placement()
+            else:
+                self._randomly_place_player(Player.PLAYER2)
 
-        self.last_opponent_shot = None
-        self.last_player_shot = None
-        self.last_player_shot = None
-        self.done = False
-        self.step_count = 0
-        self.probability_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+            if not self.allow_agent_placement:
+                self._enter_in_progress_phase()
 
-        observation = self._get_observation()
-        info = {
-            "action_mask": self._legal_action_mask(),
-            "phase": self.phase,
-            "state": self.get_state_for_player(Player.PLAYER1),
-        }
-        logger.info(
-            "env_reset",
-            extra={
+            self.last_opponent_shot = None
+            self.last_player_shot = None
+            self.done = False
+            self.step_count = 0
+            self.probability_map = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
+
+            observation = self._get_observation()
+            info = {
+                "action_mask": self._legal_action_mask(),
                 "phase": self.phase,
-                "allow_agent_placement": self.allow_agent_placement,
-                "allow_opponent_placement": self.allow_opponent_placement,
-            },
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            record_game_metric("battleship_env_reset_total", 1)
+            duration_ms = (time.perf_counter() - start) * 1000
+            span.set_attribute("latency_ms", duration_ms)
+            record_game_metric("battleship_env_reset_latency_ms", duration_ms)
+        logger.info(
+            "env_reset phase=%s allow_agent_placement=%s allow_opponent_placement=%s",
+            self.phase,
+            self.allow_agent_placement,
+            self.allow_opponent_placement,
         )
         return observation, info
 
@@ -202,83 +218,123 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
 
         outcome = StepOutcome()
         decoded = self._decode_action(action)
-        if not isinstance(decoded, PlacementAction):
-            outcome.invalid_action = True
-            reward = self._calculate_reward(outcome)
+        terminated = truncated = False
+        start = time.perf_counter()
+        with self._tracer.start_as_current_span("battleship.env.step") as span:
+            span.set_attribute("episode_id", self._episode_id)
+            span.set_attribute("phase", "placement")
+            span.set_attribute("action_index", action)
+
+            if not isinstance(decoded, PlacementAction):
+                outcome.invalid_action = True
+                reward = self._calculate_reward(outcome)
+                info = {
+                    "invalid_action": True,
+                    "action_mask": self._legal_action_mask(),
+                    "phase": self.phase,
+                    "state": self.get_state_for_player(Player.PLAYER1),
+                }
+                ship_name = decoded.ship_type.name if isinstance(decoded, PlacementAction) else None
+                logger.warning(
+                    "invalid_action",
+                    extra={
+                        "phase": self.phase,
+                        "reason": "placement",
+                        "ship_type": ship_name,
+                        "actor": "agent",
+                    },
+                )
+                observation = self._get_observation()
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._record_step_telemetry(
+                    span, "placement", outcome, reward, terminated, truncated, False, duration_ms
+                )
+                return observation, reward, terminated, truncated, info
+
+            span.set_attribute("placement.ship_type", decoded.ship_type.name)
+            span.set_attribute("placement.row", decoded.coord.row)
+            span.set_attribute("placement.col", decoded.coord.col)
+            span.set_attribute("placement.orientation", decoded.orientation.value)
+
+            if decoded.ship_type not in self._pending_ships:
+                outcome.invalid_action = True
+                reward = self._calculate_reward(outcome)
+                info = {
+                    "invalid_action": True,
+                    "action_mask": self._legal_action_mask(),
+                    "phase": self.phase,
+                    "state": self.get_state_for_player(Player.PLAYER1),
+                }
+                logger.warning(
+                    "invalid_action",
+                    extra={
+                        "phase": self.phase,
+                        "reason": "placement_pending",
+                        "actor": "agent",
+                    },
+                )
+                observation = self._get_observation()
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._record_step_telemetry(
+                    span, "placement", outcome, reward, terminated, truncated, False, duration_ms
+                )
+                return observation, reward, terminated, truncated, info
+
+            player_board = self.game.boards[Player.PLAYER1]
+            ship = Ship(decoded.ship_type, decoded.coord, decoded.orientation)
+            try:
+                player_board.place_ship(ship)
+            except ValueError:
+                outcome.invalid_action = True
+                reward = self._calculate_reward(outcome)
+                info = {
+                    "invalid_action": True,
+                    "action_mask": self._legal_action_mask(),
+                    "phase": self.phase,
+                    "state": self.get_state_for_player(Player.PLAYER1),
+                }
+                logger.warning(
+                    "invalid_action",
+                    extra={
+                        "phase": self.phase,
+                        "reason": "placement_conflict",
+                        "actor": "agent",
+                    },
+                )
+                observation = self._get_observation()
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._record_step_telemetry(
+                    span, "placement", outcome, reward, terminated, truncated, False, duration_ms
+                )
+                return observation, reward, terminated, truncated, info
+
+            self._pending_ships.remove(decoded.ship_type)
+            reward = PLACEMENT_SUCCESS_REWARD
+            if not self._pending_ships:
+                self._begin_firing_phase()
+                outcome.placement_complete = True
+                logger.info("player_placement_complete", extra={"actor": "agent"})
+
+            self.step_count += 1
+            reward += self._calculate_reward(outcome)
+            observation = self._get_observation()
             info = {
-                "invalid_action": True,
                 "action_mask": self._legal_action_mask(),
                 "phase": self.phase,
                 "state": self.get_state_for_player(Player.PLAYER1),
             }
-            ship_name = decoded.ship_type.name if isinstance(decoded, PlacementAction) else None
-            logger.warning(
-                "invalid_action",
-                extra={
-                    "phase": self.phase,
-                    "reason": "placement",
-                    "ship_type": ship_name,
-                    "actor": "agent",
-                },
+            duration_ms = (time.perf_counter() - start) * 1000
+            self._record_step_telemetry(
+                span,
+                "placement",
+                outcome,
+                reward,
+                terminated,
+                truncated,
+                not outcome.invalid_action,
+                duration_ms,
             )
-            return self._get_observation(), reward, False, False, info
-
-        if decoded.ship_type not in self._pending_ships:
-            outcome.invalid_action = True
-            reward = self._calculate_reward(outcome)
-            info = {
-                "invalid_action": True,
-                "action_mask": self._legal_action_mask(),
-                "phase": self.phase,
-                "state": self.get_state_for_player(Player.PLAYER1),
-            }
-            logger.warning(
-                "invalid_action",
-                extra={
-                    "phase": self.phase,
-                    "reason": "placement_pending",
-                    "actor": "agent",
-                },
-            )
-            return self._get_observation(), reward, False, False, info
-
-        player_board = self.game.boards[Player.PLAYER1]
-        ship = Ship(decoded.ship_type, decoded.coord, decoded.orientation)
-        if not player_board.place_ship(ship):
-            outcome.invalid_action = True
-            reward = self._calculate_reward(outcome)
-            info = {
-                "invalid_action": True,
-                "action_mask": self._legal_action_mask(),
-                "phase": self.phase,
-                "state": self.get_state_for_player(Player.PLAYER1),
-            }
-            logger.warning(
-                "invalid_action",
-                extra={
-                    "phase": self.phase,
-                    "reason": "placement_conflict",
-                    "actor": "agent",
-                },
-            )
-            return self._get_observation(), reward, False, False, info
-
-        self._pending_ships.remove(decoded.ship_type)
-        reward = PLACEMENT_SUCCESS_REWARD
-        if not self._pending_ships:
-            self._begin_firing_phase()
-            outcome.placement_complete = True
-            logger.info("player_placement_complete", extra={"actor": "agent"})
-
-        self.step_count += 1
-        reward += self._calculate_reward(outcome)
-        observation = self._get_observation()
-        info = {
-            "action_mask": self._legal_action_mask(),
-            "phase": self.phase,
-            "state": self.get_state_for_player(Player.PLAYER1),
-        }
-        return observation, reward, False, False, info
+            return observation, reward, terminated, truncated, info
 
     def _step_firing(self, action: int) -> tuple[NDArrayFloat, float, bool, bool, dict[str, Any]]:
         if self.game is None:
@@ -286,87 +342,114 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
 
         outcome = StepOutcome()
         decoded = self._decode_action(action)
-        if isinstance(decoded, PlacementAction):
-            outcome.invalid_action = True
-            reward = self._calculate_reward(outcome)
-            info = {
-                "invalid_action": True,
-                "action_mask": self._legal_action_mask(),
-                "phase": self.phase,
-                "state": self.get_state_for_player(Player.PLAYER1),
-            }
-            logger.warning(
-                "invalid_action",
-                extra={"phase": self.phase, "reason": "placement_during_firing", "actor": "agent"},
-            )
-            return self._get_observation(), reward, False, False, info
-
-        target_coord = decoded
-
-        if not self._is_fire_action_legal(target_coord):
-            outcome.invalid_action = True
-            reward = self._calculate_reward(outcome)
-            info = {
-                "invalid_action": True,
-                "action_mask": self._legal_action_mask(),
-                "phase": self.phase,
-                "state": self.get_state_for_player(Player.PLAYER1),
-            }
-            logger.warning(
-                "invalid_action",
-                extra={
-                    "phase": self.phase,
-                    "reason": "fire_illegal",
-                    "row": target_coord.row,
-                    "col": target_coord.col,
-                    "actor": "agent",
-                },
-            )
-            return self._get_observation(), reward, False, False, info
-
-        # Agent move
-        cell_state, hit_ship = self.game.make_move(Player.PLAYER1, target_coord)
-        self.last_player_shot = target_coord
-        if cell_state is CellState.HIT:
-            outcome.agent_hit = True
-            if hit_ship and hit_ship.is_sunk():
-                self._update_probability_map(target_coord)
-        else:
-            outcome.agent_miss = True
-
+        start = time.perf_counter()
         terminated = False
         truncated = False
+        with self._tracer.start_as_current_span("battleship.env.step") as span:
+            span.set_attribute("episode_id", self._episode_id)
+            span.set_attribute("phase", "firing")
+            span.set_attribute("action_index", action)
 
-        phase: GamePhase = self.game.phase
-        if phase is GamePhase.FINISHED:
-            outcome.winner = self.game.winner
-            terminated = True
-            self.done = True
-        else:
-            opp_coord = self._choose_opponent_action()
-            _, _ = self.game.make_move(Player.PLAYER2, opp_coord)
-            self.last_opponent_shot = opp_coord
-            phase = self.game.phase
+            if isinstance(decoded, PlacementAction):
+                outcome.invalid_action = True
+                reward = self._calculate_reward(outcome)
+                info = {
+                    "invalid_action": True,
+                    "action_mask": self._legal_action_mask(),
+                    "phase": self.phase,
+                    "state": self.get_state_for_player(Player.PLAYER1),
+                }
+                logger.warning(
+                    "invalid_action",
+                    extra={"phase": self.phase, "reason": "placement_during_firing", "actor": "agent"},
+                )
+                observation = self._get_observation()
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._record_step_telemetry(
+                    span, "firing", outcome, reward, terminated, truncated, False, duration_ms
+                )
+                return observation, reward, terminated, truncated, info
+
+            target_coord = decoded
+            span.set_attribute("coord.row", target_coord.row)
+            span.set_attribute("coord.col", target_coord.col)
+
+            if not self._is_fire_action_legal(target_coord):
+                outcome.invalid_action = True
+                reward = self._calculate_reward(outcome)
+                info = {
+                    "invalid_action": True,
+                    "action_mask": self._legal_action_mask(),
+                    "phase": self.phase,
+                    "state": self.get_state_for_player(Player.PLAYER1),
+                }
+                logger.warning(
+                    "invalid_action",
+                    extra={
+                        "phase": self.phase,
+                        "reason": "fire_illegal",
+                        "row": target_coord.row,
+                        "col": target_coord.col,
+                        "actor": "agent",
+                    },
+                )
+                observation = self._get_observation()
+                duration_ms = (time.perf_counter() - start) * 1000
+                self._record_step_telemetry(
+                    span, "firing", outcome, reward, terminated, truncated, False, duration_ms
+                )
+                return observation, reward, terminated, truncated, info
+
+            # Agent move
+            cell_state, hit_ship = self.game.make_move(Player.PLAYER1, target_coord)
+            self.last_player_shot = target_coord
+            if cell_state is CellState.HIT:
+                outcome.agent_hit = True
+                if hit_ship and hit_ship.is_sunk():
+                    self._update_probability_map(target_coord)
+            else:
+                outcome.agent_miss = True
+
+            phase: GamePhase = self.game.phase
             if phase is GamePhase.FINISHED:
                 outcome.winner = self.game.winner
                 terminated = True
                 self.done = True
+            else:
+                opp_coord = self._choose_opponent_action()
+                _, _ = self.game.make_move(Player.PLAYER2, opp_coord)
+                self.last_opponent_shot = opp_coord
+                phase = self.game.phase
+                if phase is GamePhase.FINISHED:
+                    outcome.winner = self.game.winner
+                    terminated = True
+                    self.done = True
 
-        self.step_count += 1
-        if not self.done and self.step_count >= MAX_STEPS:
-            truncated = True
-            self.done = True
+            self.step_count += 1
+            if not self.done and self.step_count >= MAX_STEPS:
+                truncated = True
+                self.done = True
 
-        reward = self._calculate_reward(outcome)
-        observation = self._get_observation()
-        info = {
-            "action_mask": self._legal_action_mask(),
-            "winner": outcome.winner.name if outcome.winner else None,
-            "phase": self.phase,
-            "state": self.get_state_for_player(Player.PLAYER1),
-        }
-
-        return observation, reward, terminated, truncated, info
+            reward = self._calculate_reward(outcome)
+            observation = self._get_observation()
+            info = {
+                "action_mask": self._legal_action_mask(),
+                "winner": outcome.winner.name if outcome.winner else None,
+                "phase": self.phase,
+                "state": self.get_state_for_player(Player.PLAYER1),
+            }
+            duration_ms = (time.perf_counter() - start) * 1000
+            self._record_step_telemetry(
+                span,
+                "firing",
+                outcome,
+                reward,
+                terminated,
+                truncated,
+                not outcome.invalid_action,
+                duration_ms,
+            )
+            return observation, reward, terminated, truncated, info
 
     def render(self) -> None:
         if self.render_mode not in {"human", "ansi"}:
@@ -515,6 +598,66 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
     def _get_observation(self) -> NDArrayFloat:
         return self._build_observation_for_player(Player.PLAYER1)
 
+    def _record_step_telemetry(
+        self,
+        span,
+        phase: str,
+        outcome: StepOutcome,
+        reward: float,
+        terminated: bool,
+        truncated: bool,
+        action_valid: bool,
+        duration_ms: float,
+    ) -> None:
+        span.set_attribute("terminated", terminated)
+        span.set_attribute("truncated", truncated)
+        span.set_attribute("invalid_action", not action_valid)
+        span.set_attribute("reward", reward)
+        reward_type = "invalid"
+        if not outcome.invalid_action:
+            if outcome.agent_hit:
+                reward_type = "hit"
+            elif outcome.agent_miss:
+                reward_type = "miss"
+            elif outcome.placement_complete:
+                reward_type = "placement_complete"
+            elif outcome.winner or terminated:
+                reward_type = "terminal"
+            else:
+                reward_type = "neutral"
+        span.set_attribute("reward_type", reward_type)
+
+        record_game_metric(
+            "battleship_env_actions_total",
+            1,
+            {"phase": phase, "result": "valid" if action_valid else "invalid"},
+        )
+        record_game_metric(
+            "battleship_env_step_latency_ms",
+            duration_ms,
+            {"phase": phase},
+        )
+        record_game_metric(
+            "battleship_env_rewards_total",
+            reward,
+            {"phase": phase, "type": reward_type},
+        )
+        if outcome.agent_hit:
+            record_game_metric("battleship_env_hits_total", 1, {"phase": phase})
+        if outcome.agent_miss:
+            record_game_metric("battleship_env_misses_total", 1, {"phase": phase})
+        if outcome.invalid_action:
+            record_game_metric("battleship_env_invalid_actions_total", 1, {"phase": phase})
+        if outcome.placement_complete:
+            record_game_metric("battleship_env_placement_complete_total", 1, {})
+
+        if outcome.winner:
+            result = "win" if outcome.winner is Player.PLAYER1 else "loss"
+            record_game_metric("battleship_env_episode_completed_total", 1, {"result": result})
+            span.set_attribute("winner", outcome.winner.name)
+        elif truncated:
+            record_game_metric("battleship_env_episode_completed_total", 1, {"result": "truncated"})
+
     def _build_observation_for_player(self, player: Player) -> NDArrayFloat:
         obs: NDArrayFloat = np.zeros((self.num_channels, BOARD_SIZE, BOARD_SIZE), dtype=np.float32)
         if self.game is None:
@@ -629,8 +772,12 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
                 attempts += 1
                 continue
             ship = Ship(decoded.ship_type, decoded.coord, decoded.orientation)
-            if board.place_ship(ship):
-                pending.remove(decoded.ship_type)
+            try:
+                board.place_ship(ship)
+            except ValueError:
+                attempts += 1
+                continue
+            pending.remove(decoded.ship_type)
             attempts += 1
 
         if pending:

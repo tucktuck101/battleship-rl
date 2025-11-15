@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -47,6 +50,7 @@ def test_trainer_supports_external_opponent(tmp_path_factory: pytest.TempPathFac
     trainer = Trainer(config, opponent_agent=opponent)
     metrics = trainer._train_episode(0)
     assert "reward" in metrics
+    assert trainer.episode_rewards
     trainer.env.close()
 
 
@@ -55,7 +59,8 @@ def test_trainer_self_play_enables_policy_wrapper(tmp_path_factory: pytest.TempP
     config.opponent = "self"
     trainer = Trainer(config)
     assert trainer.env.opponent_policy is not None
-    trainer._train_episode(0)
+    metrics = trainer._train_episode(0)
+    assert metrics["epsilon"] < trainer.config.epsilon_start
     trainer.env.close()
 
 
@@ -77,4 +82,38 @@ def test_trainer_handles_opponent_manual_placement(
     opponent = DeterministicOpponent()
     trainer = Trainer(config, opponent_agent=opponent)
     trainer._train_episode(0)
+    trainer.env.close()
+
+
+def test_policy_rollout_generates_summaries(tmp_path_factory: pytest.TempPathFactory) -> None:
+    config = _small_config(tmp_path_factory)
+    config.rollout_episodes = 2
+    trainer = Trainer(config)
+    output_file = Path(config.save_dir) / "rollouts.jsonl"
+    summaries = trainer._policy_rollout(output_path=output_file)
+    assert len(summaries) == 2
+    assert trainer.rollout_history
+    assert output_file.exists()
+    lines = output_file.read_text().strip().splitlines()
+    assert len(lines) == 2
+    trainer.env.close()
+
+
+def test_metrics_persisted_with_episode_history(tmp_path_factory: pytest.TempPathFactory) -> None:
+    config = _small_config(tmp_path_factory)
+    config.num_episodes = 2
+    config.eval_interval = 1
+    trainer = Trainer(config)
+    for episode in range(1, config.num_episodes + 1):
+        trainer._train_episode(episode)
+        trainer._evaluate()
+        checkpoint = Path(config.save_dir) / f"checkpoint_ep{episode}.pt"
+        trainer.agent.save(checkpoint)
+        assert checkpoint.exists()
+    trainer._save_metrics()
+
+    metrics_path = Path(config.save_dir) / "metrics.json"
+    payload = json.loads(metrics_path.read_text())
+    assert payload["episode_rewards"]
+    assert payload["eval_history"]
     trainer.env.close()

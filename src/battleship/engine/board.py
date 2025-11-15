@@ -68,19 +68,21 @@ class Board:
 
         return True
 
-    def place_ship(self, ship: Ship) -> bool:
-        """Add ship to the board if placement is valid."""
+    def place_ship(self, ship: Ship) -> None:
+        """Add ship to the board or raise when placement violates rules."""
         with tracer.start_as_current_span("board.place_ship") as span:
             span.set_attribute("ship.type", ship.ship_type.name)
             span.set_attribute("ship.length", ship.ship_type.length)
             span.set_attribute("ship.start.row", ship.start.row)
             span.set_attribute("ship.start.col", ship.start.col)
             span.set_attribute("board.owner", self.owner)
-            if self.can_place_ship(ship):
-                self.ships.append(ship)
-                PLACEMENT_COUNTER.add(1, attributes={"result": "success", "owner": self.owner})
-                logger.info(
-                    "ship_placed",
+            try:
+                self._ensure_placeable(ship)
+            except ValueError as exc:
+                span.record_exception(exc)
+                PLACEMENT_COUNTER.add(1, attributes={"result": "failed", "owner": self.owner})
+                logger.warning(
+                    "ship_placement_failed",
                     extra={
                         "owner": self.owner,
                         "ship_type": ship.ship_type.name,
@@ -89,10 +91,11 @@ class Board:
                         "col": ship.start.col,
                     },
                 )
-                return True
-            PLACEMENT_COUNTER.add(1, attributes={"result": "failed", "owner": self.owner})
-            logger.warning(
-                "ship_placement_failed",
+                raise
+            self.ships.append(ship)
+            PLACEMENT_COUNTER.add(1, attributes={"result": "success", "owner": self.owner})
+            logger.info(
+                "ship_placed",
                 extra={
                     "owner": self.owner,
                     "ship_type": ship.ship_type.name,
@@ -101,7 +104,6 @@ class Board:
                     "col": ship.start.col,
                 },
             )
-            return False
 
     def receive_shot(self, coord: Coordinate) -> tuple[CellState, Ship | None]:
         """Register a shot at this board and return its outcome."""
@@ -168,7 +170,12 @@ class Board:
                     start_row = rng.randrange(self.size)
                     start_col = rng.randrange(self.size)
                     candidate = Ship(ship_type, Coordinate(start_row, start_col), orientation)
-                    placed = self.place_ship(candidate)
+                    try:
+                        self.place_ship(candidate)
+                    except ValueError:
+                        attempts += 1
+                        continue
+                    placed = True
                     attempts += 1
                 logger.debug(
                     "random_ship_placed",
@@ -194,3 +201,19 @@ class Board:
                         continue
                     adjacent.add(neighbour)
         return adjacent
+
+    def _ensure_placeable(self, ship: Ship) -> None:
+        """Raise ValueError when a placement violates board rules."""
+        coords = ship.coordinates()
+        if not all(self.is_valid_coordinate(coord) for coord in coords):
+            raise ValueError("Ship placement out of bounds.")
+
+        for existing in self.ships:
+            if ship.overlaps(existing):
+                raise ValueError("Ship placement overlaps an existing ship.")
+
+        if not self.allow_adjacent:
+            occupied = self._occupied_coordinates()
+            forbidden = self._adjacent_coordinates(occupied)
+            if any(coord in forbidden for coord in coords):
+                raise ValueError("Ship placement violates adjacency rules.")

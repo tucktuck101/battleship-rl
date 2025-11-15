@@ -29,6 +29,8 @@ play.
   - *Opponent placement mode* – pass `allow_opponent_placement=True` (or
     `--opponent-placement` via the trainer CLI) so the adversary places its own
     fleet instead of receiving a random layout.
+  - Detailed action/observation space docs live in
+    `docs/ml/gymnasium_environment.md`.
 - **Telemetry** – Shared tracer/meter/logger helpers with OTLP exporters.
 - **User Interfaces**
   - `scripts/run_ui.py` launches the Pygame UI.
@@ -104,6 +106,23 @@ Run the existing pytest suites:
 
 ```bash
 PYTHONPATH=src pytest
+```
+
+Focused suites:
+
+```bash
+# Engine-only tests
+make test-engine
+
+# Gym environment + RL agent/trainer tests
+make test-env
+make rl-test
+
+# Telemetry-only suites
+make telemetry-test
+
+# Launch default DQN training run
+make train
 ```
 
 Add similar tests as new modules land (e.g., API endpoints, replay pipeline).

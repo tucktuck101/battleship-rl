@@ -30,12 +30,12 @@ def init_logging(config: TelemetryConfig) -> logging.Logger:
     except ImportError:  # pragma: no cover
         return logger
 
-    resource = Resource.create(
-        {
-            "service.name": config.service_name,
-            "service.namespace": config.service_namespace,
-        }
-    )
+    attributes = {
+        "service.name": config.service_name,
+        "service.namespace": config.service_namespace,
+    }
+    attributes.update(config.resource_attributes)
+    resource = Resource.create(attributes)
     provider = LoggerProvider(resource=resource)
 
     if config.otlp_logs_endpoint:

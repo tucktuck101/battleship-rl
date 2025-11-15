@@ -35,12 +35,12 @@ def init_tracing(config: TelemetryConfig) -> Tracer:
     """Initialise the TracerProvider according to the config."""
     global _TRACER, _TRACER_PROVIDER
 
-    resource = Resource.create(
-        {
-            "service.name": config.service_name,
-            "service.namespace": config.service_namespace,
-        }
-    )
+    attributes = {
+        "service.name": config.service_name,
+        "service.namespace": config.service_namespace,
+    }
+    attributes.update(config.resource_attributes)
+    resource = Resource.create(attributes)
     provider = TracerProvider(resource=resource)
 
     if config.otlp_traces_endpoint:

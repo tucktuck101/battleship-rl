@@ -1,71 +1,114 @@
 # OpenTelemetry Reference
 
-Central list of the telemetry signals emitted by the Battleship RL stack. Use this as a lookup table when wiring Grafana dashboards, Loki queries, or trace searches.
+Authoritative guide to the telemetry design used across Battleship RL. Use this
+to understand metric/span naming, attribute conventions, and how to wire
+exporters via `TelemetryConfig`.
+
+## Naming & Attribute Conventions
+
+- **Namespaces**
+  - Spans: `battleship.engine.*`, `battleship.env.*`, `battleship.agent.*`, `battleship.ai.*`.
+  - Metrics: all prefixed with `battleship_`.
+  - Loggers: module-specific (e.g., `battleship.engine`, `battleship.env`).
+- **Common resource attributes**: `service.name`, `service.namespace`, plus any
+  values defined in `OTEL_RESOURCE_ATTRIBUTES`. Default service names:
+  - Engine/env instrumentation: `battleship` / namespace `game`.
+  - Trainer/pipeline: `battleship-trainer` / namespace `ml`.
+- **Span attributes**
+  - Engine: `game.id`, `player`, `coord.row`, `coord.col`, `shot_outcome`,
+    `hit`, `sunk`.
+  - Environment: `episode_id`, `phase`, `action_index`, `reward`,
+    `reward_type`, `invalid_action`, `terminated`, `truncated`.
+  - Agent: `epsilon`, `mode` (`explore|exploit`), `buffer_size`, `batch_size`.
+- All attributes/labels are deliberately low-cardinality; avoid coordinates or
+  IDs in metric labels beyond the bounded ones listed above.
 
 ## Metrics
 
-| Metric name | Type | Emitted by | Description / when it changes | Useful attributes |
-|-------------|------|------------|--------------------------------|-------------------|
-| `battleship_engine_ship_placements` | Counter | `src/battleship/engine/board.py` | Incremented every time a board tries to place a ship (counts both manual and random placement attempts). | `result` (`success`/`failed`), `owner` (`player1`, `player2`, `opponent`, etc.) |
-| `battleship_engine_shots` | Counter | `src/battleship/engine/board.py` | Counts every shot received by a board. | `outcome` (`hit`/`miss`), `owner` |
-| `battleship_engine_moves` | Counter | `src/battleship/engine/game.py` | Increments after each validated turn processed by `BattleshipGame.make_move`. | `result` (cell state), `player` |
-| `battleship_episode_reward` | Histogram | `Trainer` in `src/battleship/ai/training.py` | Records total reward per training episode. | – |
-| `battleship_episode_mean_loss` | Histogram | `Trainer` | Records the mean loss value gathered during a training episode. | – |
-| `battleship_eval_win_rate` | Histogram | `Trainer` | Records win rate observed during evaluation sweeps. | – |
-| `agent.action_latency_ms` | Counter | `InstrumentedDQNAgent` (`src/battleship/ai/instrumented_agent.py`) | Adds the elapsed milliseconds for every `select_action` call. | – |
-| `agent.training_steps` | Counter | `InstrumentedDQNAgent` | Bumps once per `train_step`. | – |
-| `agent.training_latency_ms` | Counter | `InstrumentedDQNAgent` | Adds the time spent inside a `train_step`. | – |
-| `agent.training_loss` | Counter | `InstrumentedDQNAgent` | Adds the numeric loss (if available) on each training update so trending is possible. | – |
-| `game.setup.count` | Counter | `InstrumentedBattleshipGame` (`src/battleship/engine/instrumented_game.py`) | Incremented whenever a random setup finishes. | – |
-| `game.shots_total` | Counter | `InstrumentedBattleshipGame` | Counts every call to `make_move`. | `player` |
-| `game.hits_total` | Counter | `InstrumentedBattleshipGame` | Subset of `game.shots_total` when the outcome is a hit. | `player` |
-| `game.misses_total` | Counter | `InstrumentedBattleshipGame` | Subset of `game.shots_total` when the outcome is a miss. | `player` |
-| `game.completed.count` | Counter | `InstrumentedBattleshipGame` | Incremented when a match ends. | `winner` |
+| Metric name | Type | Emitted by | Description / when it changes | Attributes |
+|-------------|------|------------|--------------------------------|------------|
+| `battleship_game_setup_total` | Counter | Instrumented game | Random setup completed | `player1_ships`, `player2_ships` |
+| `battleship_game_completed_total` | Counter | Instrumented game | Match finished | `winner` |
+| `battleship_game_duration_seconds` | Histogram | Instrumented game | Setup→finish duration | `winner` |
+| `battleship_shots_total` | Counter | Instrumented game | Every move | `player` |
+| `battleship_shots_by_result_total` | Counter | Instrumented game | Same as above but labelled by result | `player`, `result=hit|miss` |
+| `battleship_game_invalid_moves_total` | Counter | Instrumented game | Invalid moves rejected | `player`, `reason` |
+| `battleship_env_reset_total` | Counter | `BattleshipEnv.reset` | Gym reset invoked | – |
+| `battleship_env_reset_latency_ms` | Histogram | `BattleshipEnv.reset` | Reset latency | – |
+| `battleship_env_actions_total` | Counter | `BattleshipEnv.step` | Placement + firing actions | `phase=placement|firing`, `result=valid|invalid` |
+| `battleship_env_step_latency_ms` | Histogram | `BattleshipEnv.step` | Runtime per step | `phase` |
+| `battleship_env_rewards_total` | Counter | `BattleshipEnv.step` | Reward per step | `phase`, `type=hit|miss|placement_complete|invalid|terminal` |
+| `battleship_env_hits_total` / `battleship_env_misses_total` | Counter | `BattleshipEnv.step` | Subset of actions | `phase` |
+| `battleship_env_invalid_actions_total` | Counter | `BattleshipEnv.step` | Invalid placement/firing attempts | `phase` |
+| `battleship_env_episode_completed_total` | Counter | `BattleshipEnv.step` | Episode terminates or truncates | `result=win|loss|truncated` |
+| `battleship_agent_actions_total` | Counter | Instrumented DQN agent | Chosen actions | `mode=explore|exploit` |
+| `battleship_agent_action_latency_ms` | Histogram | Instrumented DQN agent | `select_action` latency | `mode` |
+| `battleship_agent_epsilon` | Counter | Instrumented DQN agent | Current epsilon (write latest value) | – |
+| `battleship_agent_training_steps_total` | Counter | Instrumented DQN agent | `train_step` invocations | – |
+| `battleship_agent_training_latency_ms` | Histogram | Instrumented DQN agent | Training step duration | – |
+| `battleship_agent_training_loss` | Counter | Instrumented DQN agent | Loss per update | – |
+| `battleship_episode_reward`, `battleship_episode_mean_loss`, `battleship_eval_win_rate` | Histogram | Trainer | Episode totals and evaluation stats | – |
 
-> All metrics inherit the `service.name=battleship-trainer` (and namespace `ml`) resource attributes configured in `battleship.telemetry`.
+> All metrics inherit the resource attributes configured via `TelemetryConfig`.
+
+## Spans
+
+| Span name | Source | Notes |
+|-----------|--------|-------|
+| `board.place_ship`, `board.receive_shot`, `board.random_placement` | `src/battleship/engine/board.py` | Low-level board operations |
+| `battleship.engine.game` | `src/battleship/engine/instrumented_game.py` | Top-level span per match |
+| `battleship.engine.setup_random`, `battleship.engine.make_move`, `battleship.engine.game_complete` | Instrumented game | Child spans covering setup, each move, and completion |
+| `battleship.env.reset`, `battleship.env.step` | `src/battleship/ai/environment.py` | Child spans for Gym resets/steps; tags include reward type, validity, termination |
+| `battleship.agent.select_action`, `battleship.agent.train_step` | `src/battleship/ai/instrumented_agent.py` | Inference/training spans containing epsilon/mode/buffer stats |
+| `train_episode`, `evaluate_agent` | `src/battleship/ai/training.py` | Episode-level spans with reward/loss/win-rate attributes |
+| `pipeline.phase` and derivatives | `scripts/auto_train_pipeline.py` | Adaptive training pipeline phases |
+
+Every major log statement executes inside one of the spans above, so Tempo ↔ Loki
+correlation uses the embedded trace/span IDs automatically.
 
 ## Logs
 
-All logs automatically include the current OTEL trace/span identifiers (via `LoggingInstrumentor`). The key structured log events you can filter in Loki are grouped below.
+- Engine board: `ship_placed`, `ship_placement_failed`, `shot_hit`, `shot_miss`, `shot_out_of_bounds`, `shot_duplicate`, `random_ship_placed`.
+- Engine game/instrumented game: `make_move …`, `game finished`, validation warnings.
+- Environment: `env_reset`, `env_phase_transition`, `invalid_action`, `player_placement_complete`, `opponent_manual_placement_*`.
+- Trainer/pipeline: `trainer_initialised`, `train_episode`, `evaluate_agent`, `phase_start`, `phase_complete`, etc.
+- Agent: `select_action` and `train_step` logs show epsilon, action, exploratory flag, loss.
 
-- **Engine board (`src/battleship/engine/board.py`)**
-  - `ship_placed`, `ship_placement_failed` – placement attempts with `owner`, `ship_type`, `orientation`, `row`, `col`.
-  - `shot_hit`, `shot_miss`, `shot_out_of_bounds`, `shot_duplicate` – fired when shots are processed.
-  - `random_ship_placed` – debug log after each RNG placement, includes attempt counts.
-- **Engine game (`src/battleship/engine/game.py`)**
-  - `game_random_placement`, `game_setup_random_complete` – lifecycle of RNG setup.
-  - `move_rejected_game_not_in_progress`, `move_rejected_wrong_player` – guards against illegal turn orders.
-  - `game_finished` – announces the winner and finishing player.
-- **Environment (`src/battleship/ai/environment.py`)**
-  - `env_reset`, `env_phase_transition` – high-level state changes.
-  - `invalid_action` – emitted for any illegal placement or firing action; includes `phase`, `reason`, `actor`, and sometimes coordinates.
-  - `player_placement_complete`, `opponent_manual_placement_complete`, `opponent_manual_placement_fallback` – track placement phase progress.
-- **Trainer (`src/battleship/ai/training.py`)**
-  - `trainer_initialised` – config summary.
-  - `train_episode` – reward/steps/loss per episode.
-  - `evaluate_agent` – evaluation aggregates (also logged inside `scripts/auto_train_pipeline.py` as `phase_*` events).
-- **Pipeline (`scripts/auto_train_pipeline.py`)**
-  - `phase_start`, `phase_episode`, `phase_epoch_eval`, `phase_criteria_met`, `phase_complete`, etc. – describe adaptive phase transitions during automated training runs.
-- **Instrumented agent/game helpers**
-  - `select_action …`, `train_step …`, and `make_move …` logs expose low-level insight when the instrumented wrappers are in use.
+All logs inherit OTEL context (trace/span IDs) so Loki queries can pivot directly to Tempo traces.
 
-Each logger inherits OTEL metadata, so filtering by `owner`, `actor`, or `phase` in Loki will identify which player/agent generated a warning.
+## Exporter Wiring
 
-## Traces
+`TelemetryConfig` reads environment variables and toggles tracing/metrics/logging.
+Common settings:
 
-Traces wrap the major control-flow segments so Tempo (or any OTLP trace backend) can stitch together full-episode execution. All spans share the `service.name=battleship-trainer` resource attribute unless otherwise overridden.
+| Variable | Purpose |
+|----------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` or signal-specific `OTEL_EXPORTER_OTLP_{TRACES|METRICS|LOGS}_ENDPOINT` | Enables exporters and sets the endpoint |
+| `BATTLESHIP_ENABLE_TRACING`, `BATTLESHIP_ENABLE_METRICS`, `BATTLESHIP_ENABLE_LOGGING` | Force-enable/disable individual signals |
+| `OTEL_SERVICE_NAME`, `OTEL_SERVICE_NAMESPACE` | Override resource metadata |
+| `OTEL_RESOURCE_ATTRIBUTES` | Extra resource attributes (comma-separated `key=value`) |
 
-| Span name | Defined in | Notes |
-|-----------|------------|-------|
-| `board.place_ship` | `src/battleship/engine/board.py` | Captures validations and placement attempts; records ship metadata and `board.owner`. |
-| `board.receive_shot` | `src/battleship/engine/board.py` | Encloses all hit/miss calculations for a single incoming shot. |
-| `board.random_placement` | `src/battleship/engine/board.py` | Wraps the random fleet generation loop. |
-| `game.setup_random` | `src/battleship/engine/game.py` | Covers end-to-end game setup across both boards. |
-| `game.make_move` | `src/battleship/engine/game.py` | Spans every validated turn, tagging coordinates, outcome, and winner transitions. |
-| `battleship.setup_random`, `battleship.make_move` | `src/battleship/engine/instrumented_game.py` | Additional spans when using the instrumented game wrapper (delegates to base implementation but provides dedicated tracer namespace). |
-| `agent.select_action`, `agent.train_step` | `src/battleship/ai/instrumented_agent.py` | Span per inference or optimisation step when the instrumented agent is used. |
-| `train_episode` | `src/battleship/ai/training.py` | Wraps the full Gym episode (reset → steps) while recording reward/loss attributes. |
-| `evaluate_agent` | `src/battleship/ai/training.py` | Wraps evaluation sweeps; attributes include win rate and episode lengths. |
-| `pipeline.phase` | `scripts/auto_train_pipeline.py` | Top-level span for each adaptive phase executed by `auto_train_pipeline.py`. |
+Usage:
 
-Because logging is instrumented, every log written inside these spans includes the trace/span IDs, making it easy to pivot between traces, logs, and metrics across the entire training environment (including engine modules under `src/` and orchestration scripts under `scripts/`).
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317"
+export OTEL_SERVICE_NAME="battleship-trainer"
+export BATTLESHIP_ENABLE_TRACING=1
+export BATTLESHIP_ENABLE_METRICS=1
+export BATTLESHIP_ENABLE_LOGGING=1
+
+PYTHONPATH=src python -m battleship.ai.training ...
+```
+
+Any component can also instantiate a config directly:
+
+```python
+from battleship.telemetry import TelemetryConfig, init_telemetry
+
+config = TelemetryConfig.from_env(service_name="battleship-ui")
+init_telemetry(config)
+```
+
+The helpers (`get_tracer`, `get_meter`, `get_logger`, `record_game_metric`,
+`load_telemetry_config`) encapsulate exporter wiring so the rest of the codebase
+never reaches into OTLP clients directly.

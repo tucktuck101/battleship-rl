@@ -7,7 +7,9 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 from battleship.ai.agent import AgentConfig, DQNAgent
+from battleship.ai.environment import BattleshipEnv
 from battleship.ai.instrumented_agent import InstrumentedDQNAgent
+from battleship.telemetry import config as telemetry_config_module
 from battleship.engine.board import CellState
 from battleship.engine.game import BattleshipGame, GamePhase, Player
 from battleship.engine.instrumented_game import InstrumentedBattleshipGame
@@ -79,6 +81,53 @@ def test_logging_init_noop() -> None:
     assert logger_module.init_logging(TelemetryConfig()) is logger
 
 
+def test_init_telemetry_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(telemetry_config_module, "init_tracing", lambda cfg: calls.append("tr"))
+    monkeypatch.setattr(telemetry_config_module, "init_metrics", lambda cfg: calls.append("me"))
+    monkeypatch.setattr(telemetry_config_module, "init_logging", lambda cfg: calls.append("lo"))
+
+    telemetry_config_module.init_telemetry(TelemetryConfig())
+    assert calls == []
+
+
+def test_init_telemetry_respects_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    monkeypatch.setattr(telemetry_config_module, "init_tracing", lambda cfg: calls.append("tr"))
+    monkeypatch.setattr(telemetry_config_module, "init_metrics", lambda cfg: calls.append("me"))
+    monkeypatch.setattr(telemetry_config_module, "init_logging", lambda cfg: calls.append("lo"))
+
+    config = TelemetryConfig(enable_tracing=True, enable_logging=True)
+    telemetry_config_module.init_telemetry(config)
+    assert calls == ["tr", "lo"]
+
+
+def test_load_telemetry_config_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    telemetry_config_module.load_telemetry_config.cache_clear()
+
+    original_from_env = telemetry_config_module.TelemetryConfig.from_env
+    calls = {"count": 0}
+
+    def fake_from_env(**overrides):
+        calls["count"] += 1
+        return TelemetryConfig(enable_tracing=True)
+
+    monkeypatch.setattr(
+        telemetry_config_module.TelemetryConfig,
+        "from_env",
+        classmethod(lambda cls, **overrides: fake_from_env(**overrides)),
+    )
+
+    first = telemetry_config_module.load_telemetry_config()
+    second = telemetry_config_module.load_telemetry_config()
+    assert first is second
+    assert calls["count"] == 1
+
+    telemetry_config_module.TelemetryConfig.from_env = original_from_env  # type: ignore[assignment]
+
+
 def test_instrumented_game_emits_spans(monkeypatch: pytest.MonkeyPatch) -> None:
     tracer = DummyTracer()
     metrics_calls: list[tuple[str, float, dict | None]] = []
@@ -101,15 +150,17 @@ def test_instrumented_game_emits_spans(monkeypatch: pytest.MonkeyPatch) -> None:
 
     game = InstrumentedBattleshipGame(rng_seed=0)
     game.setup_random()
-    assert "battleship.setup_random" in tracer.span_names
+    assert "battleship.engine.game" in tracer.span_names
+    assert "battleship.engine.setup_random" in tracer.span_names
 
     tracer.span_names.clear()
     metrics_calls.clear()
     game.make_move(Player.PLAYER1, Coordinate(0, 0))
-    assert "battleship.make_move" in tracer.span_names
+    assert "battleship.engine.make_move" in tracer.span_names
+    assert "battleship.engine.game_complete" in tracer.span_names
     metric_names = {name for name, _, _ in metrics_calls}
-    assert "game.shots_total" in metric_names
-    assert "game.completed.count" in metric_names
+    assert "battleship_shots_total" in metric_names
+    assert "battleship_game_completed_total" in metric_names
 
 
 def test_instrumented_agent_records_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,9 +181,39 @@ def test_instrumented_agent_records_metrics(monkeypatch: pytest.MonkeyPatch) -> 
 
     action = agent.select_action(obs, legal_actions=[0, 1], training=False)
     assert action in (0, 1)
-    assert "agent.select_action" in tracer.span_names
+    assert "battleship.agent.select_action" in tracer.span_names
+    assert "battleship_agent_actions_total" in metric_calls
+    assert "battleship_agent_action_latency_ms" in metric_calls
 
+    metric_calls.clear()
     monkeypatch.setattr(DQNAgent, "train_step", lambda self: 0.25)
     agent.train_step()
-    assert "agent.train_step" in tracer.span_names
-    assert "agent.training_steps" in metric_calls
+    assert "battleship.agent.train_step" in tracer.span_names
+    assert "battleship_agent_training_steps_total" in metric_calls
+    assert "battleship_agent_training_loss" in metric_calls
+
+
+def test_environment_records_telemetry(monkeypatch: pytest.MonkeyPatch) -> None:
+    tracer = DummyTracer()
+    metrics: list[str] = []
+    env_logger = MagicMock()
+
+    monkeypatch.setattr("battleship.ai.environment.get_otel_tracer", lambda *_: tracer)
+    monkeypatch.setattr("battleship.ai.environment.get_otel_logger", lambda *_: env_logger)
+    monkeypatch.setattr("battleship.ai.environment.logger", env_logger)
+    monkeypatch.setattr(
+        "battleship.ai.environment.record_game_metric",
+        lambda name, value, attrs=None: metrics.append(name),
+    )
+
+    env = BattleshipEnv(rng_seed=3)
+    observation, info = env.reset()
+    assert observation.shape == env.observation_space.shape
+    assert "battleship.env.reset" in tracer.span_names
+
+    tracer.span_names.clear()
+    action_mask = info["action_mask"]
+    first_action = int(np.flatnonzero(action_mask)[0])
+    env.step(first_action)
+    assert "battleship.env.step" in tracer.span_names
+    assert "battleship_env_actions_total" in metrics

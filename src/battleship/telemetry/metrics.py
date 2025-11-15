@@ -29,12 +29,12 @@ def get_meter(name: str = "battleship") -> Meter:
 def init_metrics(config: TelemetryConfig) -> Meter:
     global _METER_PROVIDER, _METER, _INSTRUMENTS
 
-    resource = Resource.create(
-        {
-            "service.name": config.service_name,
-            "service.namespace": config.service_namespace,
-        }
-    )
+    attributes = {
+        "service.name": config.service_name,
+        "service.namespace": config.service_namespace,
+    }
+    attributes.update(config.resource_attributes)
+    resource = Resource.create(attributes)
 
     readers = []
     if config.otlp_metrics_endpoint:

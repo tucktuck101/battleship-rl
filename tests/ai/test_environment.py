@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
 from battleship.ai.environment import (
     BASE_NUM_CHANNELS,
     BOARD_SIZE,
@@ -204,4 +206,28 @@ def test_opponent_manual_placement_policy_invoked() -> None:
     assert any(phase == "opponent_placement" for phase in phases)
     opponent_board = env.game.boards[Player.PLAYER2]
     assert len(opponent_board.ships) == len(ShipType)
+    env.close()
+
+
+def test_step_after_episode_completion_raises() -> None:
+    env = BattleshipEnv(rng_seed=13)
+    _, info = env.reset()
+    terminated = truncated = False
+    while not (terminated or truncated):
+        action = _first_legal_action(info["action_mask"])
+        _, _, terminated, truncated, info = env.step(action)
+    with pytest.raises(RuntimeError):
+        env.step(0)
+    env.close()
+
+
+def test_episode_truncates_when_max_steps_exceeded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("battleship.ai.environment.MAX_STEPS", 1)
+    env = BattleshipEnv(rng_seed=15)
+    _, info = env.reset()
+    action = _first_legal_action(info["action_mask"])
+    _, _, terminated, truncated, info = env.step(action)
+    assert truncated or terminated
+    if not terminated:
+        assert truncated is True
     env.close()
