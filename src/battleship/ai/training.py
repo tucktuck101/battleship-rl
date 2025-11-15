@@ -13,7 +13,8 @@ from typing import Any
 import numpy as np
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
-from battleship.ai.agent import AgentConfig, DQNAgent
+from battleship.ai.agent import AgentConfig
+from battleship.ai.instrumented_agent import InstrumentedDQNAgent
 from battleship.ai.environment import BattleshipEnv
 from battleship.telemetry import (
     TelemetryConfig,
@@ -107,7 +108,7 @@ class Trainer:
             np.random.seed(config.agent_seed)
 
         obs_channels = self.env.observation_space.shape[0]
-        self.agent = DQNAgent(obs_channels=obs_channels, config=agent_config)
+        self.agent = InstrumentedDQNAgent(obs_channels=obs_channels, config=agent_config)
 
         self.episode_rewards: list[float] = []
         self.episode_losses: list[float] = []

@@ -33,7 +33,8 @@ else:
     GymnasiumEnv = Env
 
 from battleship.engine.board import Board, CellState
-from battleship.engine.game import BattleshipGame, GamePhase, Player
+from battleship.engine.instrumented_game import InstrumentedBattleshipGame
+from battleship.engine.game import GamePhase, Player
 from battleship.engine.ship import Coordinate, Orientation, Ship, ShipType
 from battleship.telemetry import (
     get_logger as get_otel_logger,
@@ -118,7 +119,7 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             dtype=np.float32,
         )
 
-        self.game: BattleshipGame | None = None
+        self.game: InstrumentedBattleshipGame | None = None
         self.last_opponent_shot: Coordinate | None = None
         self.last_player_shot: Coordinate | None = None
         self.done = False
@@ -150,7 +151,7 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             span.set_attribute("allow_opponent_placement", self.allow_opponent_placement)
 
             game_seed = self.rng.randint(0, 2**31 - 1)
-            self.game = BattleshipGame(rng_seed=game_seed)
+            self.game = InstrumentedBattleshipGame(rng_seed=game_seed)
             for player in Player:
                 self.game.boards[player] = Board(owner=player.value)
 

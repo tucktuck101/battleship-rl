@@ -20,13 +20,22 @@ compactor:
   compaction:
     block_retention: 24h
 
+metrics_generator:
+  registry:
+    external_labels: {}
+  storage:
+    path: /var/tempo/generator
+
 storage:
   trace:
     backend: local
+    wal:
+      path: /var/tempo/wal
     local:
       path: /var/tempo/traces
     block:
       bloom_filter_false_positive: 0.05
       version: v2
+
 overrides:
   max_bytes_per_trace: 20000000

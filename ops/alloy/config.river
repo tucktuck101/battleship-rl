@@ -24,7 +24,7 @@ otelcol.processor.batch "default" {
 otelcol.processor.attributes "add_loki_labels" {
   action {
     key    = "loki.attribute.labels"
-    value  = "service.name, service.namespace, severity_text, log.logger"
+    value  = "service.name, service.namespace, severity_text, log.logger, job"
     action = "insert"
   }
   
