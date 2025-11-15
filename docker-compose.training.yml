@@ -2,8 +2,6 @@ networks:
   monitoring:
 
 volumes:
-  tempo-data:
-  loki-data:
   alloy-data:
 
 services:
@@ -34,6 +32,33 @@ services:
     volumes:
       - ./ops/alloy/config.river:/etc/alloy/config.river:ro
       - alloy-data:/var/lib/alloy
+    depends_on:
+      - tempo
+      - loki
+    networks:
+      - monitoring
+
+  tempo:
+    image: grafana/tempo:latest
+    command:
+      - "-config.file=/etc/tempo/tempo.yaml"
+    ports:
+      - "3200:3200"
+    volumes:
+      - ./ops/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - ./tempo-data:/var/tempo
+    networks:
+      - monitoring
+
+  loki:
+    image: grafana/loki:2.9.3
+    command:
+      - "-config.file=/etc/loki/config.yml"
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./ops/loki/config.yml:/etc/loki/config.yml:ro
+      - ./loki-data:/var/loki
     networks:
       - monitoring
 
@@ -59,5 +84,7 @@ services:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
     networks:
       - monitoring

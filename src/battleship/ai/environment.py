@@ -637,11 +637,18 @@ class BattleshipEnv(GymnasiumEnv[NDArrayFloat, int]):
             duration_ms,
             {"phase": phase},
         )
-        record_game_metric(
-            "battleship_env_rewards_total",
-            reward,
-            {"phase": phase, "type": reward_type},
-        )
+        if reward >= 0:
+            record_game_metric(
+                "battleship_env_rewards_total",
+                reward,
+                {"phase": phase, "type": reward_type},
+            )
+        else:
+            record_game_metric(
+                "battleship_env_negative_rewards_total",
+                abs(reward),
+                {"phase": phase, "type": reward_type},
+            )
         if outcome.agent_hit:
             record_game_metric("battleship_env_hits_total", 1, {"phase": phase})
         if outcome.agent_miss:

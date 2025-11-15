@@ -34,8 +34,5 @@ ingester:
   chunk_idle_period: 5m
   chunk_retain_period: 30s
 
-limits_config:
-  rejection_reason: default
-
 compactor:
   working_directory: /var/loki/compactor

@@ -37,7 +37,8 @@ exporters via `TelemetryConfig`.
 | `battleship_env_reset_latency_ms` | Histogram | `BattleshipEnv.reset` | Reset latency | – |
 | `battleship_env_actions_total` | Counter | `BattleshipEnv.step` | Placement + firing actions | `phase=placement|firing`, `result=valid|invalid` |
 | `battleship_env_step_latency_ms` | Histogram | `BattleshipEnv.step` | Runtime per step | `phase` |
-| `battleship_env_rewards_total` | Counter | `BattleshipEnv.step` | Reward per step | `phase`, `type=hit|miss|placement_complete|invalid|terminal` |
+| `battleship_env_rewards_total` | Counter | `BattleshipEnv.step` | Positive/zero rewards per step | `phase`, `type=hit|miss|placement_complete|invalid|terminal` |
+| `battleship_env_negative_rewards_total` | Counter | `BattleshipEnv.step` | Absolute magnitude of negative rewards | `phase`, `type` |
 | `battleship_env_hits_total` / `battleship_env_misses_total` | Counter | `BattleshipEnv.step` | Subset of actions | `phase` |
 | `battleship_env_invalid_actions_total` | Counter | `BattleshipEnv.step` | Invalid placement/firing attempts | `phase` |
 | `battleship_env_episode_completed_total` | Counter | `BattleshipEnv.step` | Episode terminates or truncates | `result=win|loss|truncated` |

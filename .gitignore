@@ -31,3 +31,6 @@ training_artifacts/metrics.json
 
 # troubleshooting files
 /scripts/run_ui.py
+
+tempo-data
+loki-data

@@ -2,11 +2,9 @@ otelcol.receiver.otlp "default" {
   grpc {
     endpoint = "0.0.0.0:4317"
   }
-
   http {
     endpoint = "0.0.0.0:4318"
   }
-
   output {
     metrics = [otelcol.processor.batch.default.input]
     logs    = [otelcol.processor.batch.default.input]
@@ -17,6 +15,21 @@ otelcol.receiver.otlp "default" {
 otelcol.processor.batch "default" {
   output {
     metrics = [otelcol.exporter.prometheus.default.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    logs    = [otelcol.processor.attributes.add_loki_labels.input]
+  }
+}
+
+// Add this processor to convert OTEL attributes to Loki labels
+otelcol.processor.attributes "add_loki_labels" {
+  action {
+    key    = "loki.attribute.labels"
+    value  = "service.name, service.namespace, severity_text, log.logger"
+    action = "insert"
+  }
+  
+  output {
+    logs = [otelcol.exporter.loki.default.input]
   }
 }
 
@@ -24,8 +37,27 @@ otelcol.exporter.prometheus "default" {
   forward_to = [prometheus.remote_write.default.receiver]
 }
 
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+otelcol.exporter.loki "default" {
+  forward_to = [loki.write.default.receiver]
+}
+
 prometheus.remote_write "default" {
   endpoint {
     url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
   }
 }
