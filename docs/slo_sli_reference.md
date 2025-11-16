@@ -30,6 +30,10 @@ The Battleship RL training loop is instrumented at every episode boundary: rewar
   - `SLO-LAT-002: Episode Reset Latency`
 - **Environment / Engine Integrity**
   - `SLO-ENV-001: Placement Success Rate`
+  - `SLO-ENV-002: Invalid Action Rejection Rate`
+  - `SLO-ENV-003: Board State Consistency`
+  - `SLO-ENV-004: Environment Step Latency`
+  - `SLO-ENV-005: Reward Integrity`
 - **Observability Pipeline**
   - `SLO-OBS-001: Telemetry Drop Rate`
   - `SLO-OBS-002: Exporter Reliability`
@@ -446,7 +450,155 @@ Related Signals
 Notes
 - Logs should include `board_seed`, `ship_type`, and `run_id` labels for replay.
 
-### 3.12 SLO-OBS-001 — Telemetry Drop Rate
+### 3.12 SLO-ENV-002 — Invalid Action Rejection Rate
+
+**SLO Summary**  
+- **Domain:** Environment / Engine Integrity  
+- **ID:** SLO-ENV-002  
+- **Objective:** Invalid action rejection rate ≤ 0.05% per 10,000 agent actions.  
+- **Window:** Rolling 10,000-action window per run.  
+- **Error Budget:** 0.05% invalid actions before intervention.  
+- **Authoritative Backend:** Prometheus with Loki context.  
+
+**SLI Definition**  
+- **Name:** Invalid Action Rejection SLI  
+- **What it measures:** Fraction of agent-issued actions that the environment rejects for illegality (duplicate attacks, off-board coordinates, etc.).  
+- **Why it matters:** High rejection rates indicate broken masking or action pipelines, wasting steps and corrupting learning signals.
+
+**SLI Formula (Logical)**
+```text
+invalid_actions / total_actions <= 0.0005
+```
+Reference Queries
+Prometheus:
+```promql
+sum(increase(env_invalid_action_total{run_id="$run"}[10ksteps]))
+  /
+sum(increase(env_actions_total{run_id="$run"}[10ksteps]))
+```
+Loki:
+```logql
+{app="environment", msg="invalid_action"} | json | count_over_time([10m])
+```
+Related Signals
+- `env_invalid_action_total` — metric — Prometheus — Counter incremented when environment rejects an action
+- `env_actions_total` — metric — Prometheus — Counter of attempted actions
+- `invalid_action` — log — Loki — Structured log entry containing reason and coordinates
+
+Notes
+- Segment by `reason` label (e.g., `duplicate_shot`, `out_of_bounds`) to isolate policy vs. engine regressions before halting runs.
+
+### 3.13 SLO-ENV-003 — Board State Consistency
+
+**SLO Summary**  
+- **Domain:** Environment / Engine Integrity  
+- **ID:** SLO-ENV-003  
+- **Objective:** Board validation pass rate = 100% across sampled episodes.  
+- **Window:** Rolling sample of the last 2000 board validation checks.  
+- **Error Budget:** 0 tolerance; any failure pauses the run.  
+- **Authoritative Backend:** Prometheus with Loki for failure detail.  
+
+**SLI Definition**  
+- **Name:** Board State Consistency SLI  
+- **What it measures:** Whether generated board states pass structural validation (no overlapping ships, consistent hit markers).  
+- **Why it matters:** Invalid boards break fairness assumptions and invalidate training statistics.
+
+**SLI Formula (Logical)**
+```text
+consistency = validation_failures / (validation_passes + validation_failures)
+SLO holds when consistency == 0
+```
+Reference Queries
+Prometheus:
+```promql
+sum(increase(env_board_state_validation_fail_total{run_id="$run"}[2000checks]))
+```
+Loki:
+```logql
+{app="environment", msg="board_validation"} |= "failed" | json
+```
+Related Signals
+- `env_board_state_validation_pass_total` — metric — Prometheus — Counter of successful board validations
+- `env_board_state_validation_fail_total` — metric — Prometheus — Counter of failed validations
+- `board_validation` — log — Loki — JSON payload describing the invalid condition
+
+Notes
+- Validation metrics should attach `validator_version` labels so regressions caused by tooling upgrades are easy to spot.
+
+### 3.14 SLO-ENV-004 — Environment Step Latency
+
+**SLO Summary**  
+- **Domain:** Environment / Engine Integrity  
+- **ID:** SLO-ENV-004  
+- **Objective:** p95 `env.step` latency ≤ 20 ms, p99 ≤ 50 ms.  
+- **Window:** Rolling 15-minute window or 500 steps, whichever is larger.  
+- **Error Budget:** ≤5% of windows may violate either percentile.  
+- **Authoritative Backend:** Tempo (primary) with Prometheus histograms if available.  
+
+**SLI Definition**  
+- **Name:** Environment Step Latency SLI  
+- **What it measures:** Tail latency for each environment `step` call including engine updates.  
+- **Why it matters:** Slow steps throttle episode throughput and mask compute saturation issues.
+
+**SLI Formula (Logical)**
+```text
+p95(env_step_latency) <= 20ms AND p99(env_step_latency) <= 50ms
+```
+Reference Queries
+Tempo:
+```text
+service.name="environment" AND span.name="env.step" | quantile(duration_ms, 0.95) < 20 and quantile(duration_ms, 0.99) < 50
+```
+Prometheus:
+```promql
+histogram_quantile(0.95, sum(rate(env_step_latency_ms_bucket{run_id="$run"}[15m])) by (le))
+```
+Related Signals
+- `env.step` — trace — Tempo — Span capturing individual step duration
+- `env_step_latency_ms_bucket` — metric — Prometheus — Histogram of step latency (optional)
+
+Notes
+- When latency spikes correlate with specific `board_seed` or `opponent_type` labels, bubble findings to training scheduling to rebalance workloads.
+
+### 3.15 SLO-ENV-005 — Reward Integrity
+
+**SLO Summary**  
+- **Domain:** Environment / Engine Integrity  
+- **ID:** SLO-ENV-005  
+- **Objective:** Reward integrity mismatch rate = 0 across sampled episodes.  
+- **Window:** Rolling 1000-episode validation sample per run.  
+- **Error Budget:** 0 mismatches; any mismatch triggers investigation.  
+- **Authoritative Backend:** Prometheus with Loki context.  
+
+**SLI Definition**  
+- **Name:** Reward Integrity SLI  
+- **What it measures:** Comparison between real-time episode rewards and canonical re-computation performed asynchronously.  
+- **Why it matters:** Ensures reward shaping logic remains deterministic and prevents silent scoring drift.
+
+**SLI Formula (Logical)**
+```text
+reward_mismatches / reward_integrity_checks == 0
+```
+Reference Queries
+Prometheus:
+```promql
+sum(increase(reward_integrity_mismatch_total{run_id="$run"}[1000episodes]))
+  /
+sum(increase(reward_integrity_check_total{run_id="$run"}[1000episodes]))
+```
+Loki:
+```logql
+{app="trainer", msg="reward_integrity_failure"}
+```
+Related Signals
+- `reward_integrity_check_total` — metric — Prometheus — Counter for completed reward audits
+- `reward_integrity_mismatch_total` — metric — Prometheus — Counter for mismatched reward calculations
+- `reward_integrity_failure` — log — Loki — Payload with episode id, seeds, and expected vs. actual rewards
+
+Notes
+- When mismatches appear, freeze policy checkpoints from that run until the scoring code is patched and re-validated.
+
+### 3.16 SLO-OBS-001 — Telemetry Drop Rate
 
 **SLO Summary**  
 - **Domain:** Observability Pipeline  
@@ -486,7 +638,7 @@ Related Signals
 Notes
 - Maintain separate SLIs for spans and metrics; whichever breaches first consumes the shared error budget.
 
-### 3.13 SLO-OBS-002 — Exporter Reliability
+### 3.17 SLO-OBS-002 — Exporter Reliability
 
 **SLO Summary**  
 - **Domain:** Observability Pipeline  
@@ -523,7 +675,7 @@ Related Signals
 Notes
 - Track exporter-specific labels (`exporter="tempo"`) to isolate partial outages.
 
-### 3.14 SLO-OBS-003 — Collector Queue Pressure
+### 3.18 SLO-OBS-003 — Collector Queue Pressure
 
 **SLO Summary**  
 - **Domain:** Observability Pipeline  
