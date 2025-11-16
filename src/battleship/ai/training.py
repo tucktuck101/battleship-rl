@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 
-from battleship.ai.agent import AgentConfig
+from battleship.ai.agent import AgentConfig, DQNAgent
 from battleship.ai.instrumented_agent import InstrumentedDQNAgent
 from battleship.ai.environment import BattleshipEnv
 from battleship.telemetry import (

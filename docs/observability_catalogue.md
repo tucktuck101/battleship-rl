@@ -3,6 +3,47 @@
 Source of truth for Battleship RL signals (metrics, traces, logs, etc.).
 Populate each row as we formalize new telemetry.
 
+## Column Schema
+
+| Column Name | Column Data Type | Column Description |
+|-------------|------------------|--------------------|
+| SLO Group / Domain | string | High-level category the SLO belongs to (Learning, Performance, Stability, Exploration, Environment, Observability Pipeline). |
+| SLO ID | string | Short unique identifier for the SLO (e.g. `SLO-LRN-001`). |
+| SLO Name | string | Human-readable name of the SLO. |
+| SLO Objective / Target | string | The reliability goal or threshold (e.g. “≥ 60% win rate over last 1000 episodes”). |
+| SLO Window / Error Budget Notes | string | Measurement window and notes on error budget handling. |
+| SLI Name | string | Name of the Service Level Indicator used to measure the SLO. |
+| SLI Definition | string | Plain-language description of what the SLI measures. |
+| SLI Formula (Logical) | string | Backend-agnostic conceptual calculation of the SLI. |
+| SLI Backend (Authoritative) | enum (Prometheus, Loki, Tempo, multi-value) | Backend(s) considered authoritative for computing the SLI. |
+| Friendly Name | string | Human-friendly name of the telemetry signal. |
+| Signal Type | enum (metric, log, trace) | Type of telemetry object emitted. |
+| Subtype | enum (counter, gauge, histogram, span, log-event, etc.) | Specific metric or signal subtype. |
+| Canonical Name | string | Actual exported metric/log/span name. |
+| Description | string | Description of what the signal represents. |
+| Attributes / Labels | list<string> | Label keys applied to the signal (e.g. `run_id`, `episode`, `agent_id`). |
+| Cardinality Notes | string | Expected cardinality and constraints or considerations. |
+| Prometheus? | boolean (Y/N) | Whether this signal is stored and queryable in Prometheus. |
+| Prometheus Query | string | Example PromQL query used to validate or compute SLI. Empty if Prometheus? = No. |
+| Loki? | boolean (Y/N) | Whether this signal is stored and queryable in Loki. |
+| Loki Query | string | Example LogQL query for validation or analysis. Empty if Loki? = No. |
+| Tempo? | boolean (Y/N) | Whether this signal is stored and queryable in Tempo. |
+| Tempo Query | string | Example Tempo search or filter query. Empty if Tempo? = No. |
+| OTLP Export Path / Env Vars | string | How the signal is exported to the collector (env vars, endpoint, exporter config). |
+| Collector Receiver | enum (otlp/grpc, otlp/http, etc.) | Collector receiver that ingests this signal. |
+| Component | string | Application component responsible for emitting the signal (trainer, engine, agent, UI, collector). |
+| File Name | string | Source file where this signal is implemented. |
+| Status | enum (Planned, Implemented, Validated, Partial, Deprecated) | Current implementation state of the signal. |
+
+## Example Row
+
+| SLO Group / Domain | SLO ID | SLO Name | SLO Objective / Target | SLO Window / Error Budget Notes | SLI Name | SLI Definition | SLI Formula (Logical) | SLI Backend (Authoritative) | Friendly Name | Signal Type | Subtype | Canonical Name | Description | Attributes / Labels | Cardinality Notes | Prometheus? | Prometheus Query | Loki? | Loki Query | Tempo? | Tempo Query | OTLP Export Path / Env Vars | Collector Receiver | Component | File Name | Status |
+|--------------------|--------|----------|-------------------------|----------------------------------|-----------|----------------|------------------------|------------------------------|---------------|-------------|---------|----------------|-------------|----------------------|-------------------|-------------|-------------------|--------|------------|---------|-------------|------------------------------|--------------------|-----------|-----------|--------|
+| Learning Progress | SLO-LRN-001 | Episode Win Rate | ≥ 60% over last 1000 episodes | Sliding window: 1000 episodes; error budget = 40% | Episode Win Rate SLI | Measures percentage of episodes that result in a win | wins / total_episodes (last 1000 episodes) | Prometheus | Episode Win Flag | metric | counter | battleship_episode_win | 1 if the agent wins the episode, otherwise 0 | run_id, episode, agent_id, opponent_type, phase | Low cardinality (one row per episode) | Y | sum(battleship_episode_win) / count(battleship_episode_win) | N |  | N |  | obs/metrics.py (episode_win_counter) | otlp/grpc via OTEL_EXPORTER_OTLP_ENDPOINT | trainer | trainer/train_loop.py | Implemented |
+
+
+## Catalogue
+
 | Friendly Name | Signal Type | Subtype | Canonical Name | Component | File name | Description | Attributes/Labels | Cardinality Notes | OTLP Export Path/Env Vars | Collector Receiver | Storage Backend | Query Examples | Status |
 |---------------|-------------|---------|----------------|-------------------|-----------------|-------------|-------------------|-------------------|---------------------------|--------------------|-----------------|----------------|--------|
 | Game Setups Completed | Metric | Counter | `battleship_game_setup_total` | Instrumented Game | `src/battleship/engine/instrumented_game.py` | Counts randomized game setup executions | `player1_ships`,`player2_ships` |  | `OTEL_EXPORTER_OTLP_ENDPOINT` (`v1/metrics`) | `otelcol.receiver.otlp.default` | Prometheus | `sum(rate(battleship_game_setup_total[5m]))` | active |
